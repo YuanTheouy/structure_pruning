@@ -14,10 +14,15 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 class LightweightEvaluator:
     """轻量级下游任务评估器"""
     
-    def __init__(self, model, tokenizer, device="cuda"):
+    def __init__(self, model, tokenizer, device=None):
         self.model = model
         self.tokenizer = tokenizer
-        self.device = device
+        # 智能设备选择 - 使用模型实际所在的设备
+        if device is None:
+            self.device = next(model.parameters()).device
+            print(f"=> Lightweight evaluator using model device: {self.device}")
+        else:
+            self.device = device
         self.model.eval()
         
     def evaluate_piqa(self, num_samples: int = 100) -> Dict[str, float]:
@@ -436,6 +441,8 @@ class LightweightEvaluator:
         """评估所有支持的下游任务"""
         print("Starting comprehensive lightweight downstream task evaluation...")
         print("Tasks: BoolQ, PIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA")
+        print(f"=> Using {num_samples_per_task} samples per task")
+        print(f"=> Device: {self.device}")
         
         results = {}
         
@@ -450,29 +457,39 @@ class LightweightEvaluator:
             ("OBQA", self.evaluate_obqa, num_samples_per_task)
         ]
         
-        for task_name, eval_func, sample_count in tasks:
+        print(f"=> Total tasks to evaluate: {len(tasks)}")
+        
+        for i, (task_name, eval_func, sample_count) in enumerate(tasks, 1):
             try:
-                print(f"\n=> Evaluating {task_name}...")
+                print(f"\n=> [{i}/{len(tasks)}] Evaluating {task_name} with {sample_count} samples...")
                 task_results = eval_func(sample_count)
                 results.update(task_results)
                 
                 # 显示单个任务结果
                 for key, value in task_results.items():
                     print(f"   {key}: {value:.4f}")
+                
+                print(f"=> {task_name} completed successfully")
                     
             except Exception as e:
-                print(f"{task_name} evaluation failed: {e}")
+                print(f"=> {task_name} evaluation failed: {e}")
+                import traceback
+                traceback.print_exc()
                 # 为失败的任务添加默认值
                 task_key = task_name.lower().replace("-", "_") + "_acc"
                 results[task_key] = 0.0
+                print(f"=> Added default score for {task_name}: 0.0")
         
         # 计算平均分
         accuracy_scores = [v for k, v in results.items() if k.endswith('_acc')]
         if accuracy_scores:
             results["avg_score"] = sum(accuracy_scores) / len(accuracy_scores)
+            print(f"\n=> All evaluations completed! Average score: {results['avg_score']:.4f}")
         else:
             results["avg_score"] = 0.0
+            print(f"\n=> Warning: No successful evaluations! Average score: 0.0")
         
+        print(f"=> Returning {len(results)} results")
         return results
 
 def test_lightweight_evaluator():

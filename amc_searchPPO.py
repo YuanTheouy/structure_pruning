@@ -77,6 +77,21 @@ def parse_args():
     parser.add_argument('--rmsize', default=100, type=int, help='memory size for each layer')
     parser.add_argument('--window_length', default=1, type=int, help='')
     parser.add_argument('--num_collect', default=15, type=int, help='')
+    
+    # PPO specific parameters
+    parser.add_argument('--clip_param', default=0.2, type=float, help='PPO clip parameter')
+    parser.add_argument('--entropy_coef', default=0.01, type=float, help='PPO entropy coefficient')
+    parser.add_argument('--value_loss_coef', default=0.5, type=float, help='PPO value loss coefficient')
+    parser.add_argument('--gamma', default=0.998, type=float, help='PPO discount factor')
+    parser.add_argument('--lamda', default=0.95, type=float, help='PPO GAE lambda')
+    parser.add_argument('--max_grad_norm', default=0.5, type=float, help='PPO max gradient norm')
+    
+    # GPU parameter
+    parser.add_argument('--gpu_id', default=0, type=int, help='GPU device ID to use')
+    
+    # Downstream task evaluation
+    parser.add_argument('--enable_downstream', default='true', type=str, 
+                        help='Enable downstream task evaluation (true/false)')
 
     parser.add_argument('--learning_epoch', default=10, type=int, help='')
     parser.add_argument('--tau', default=0.01, type=float, help='moving average for target network')
@@ -232,12 +247,41 @@ def get_agent(nb_states, nb_actions):
     net2 = MLP([args.hidden2, args.hidden2], nn.ReLU, nb_states, 1)
     # net2 = RMlp('lstm', 1, 256, [args.hidden1, args.hidden2], nn.ReLU, nb_states, 1)
     critic = Critic(net2)
-    ppo = PPO(actor, critic, 1, args.num_collect, args.learning_epoch, 1)
+    ppo = PPO(actor, critic, 1, args.num_collect, args.learning_epoch, 1,
+              clip_param=args.clip_param,
+              entropy_coef=args.entropy_coef,
+              value_loss_coef=args.value_loss_coef,
+              gamma=args.gamma,
+              lamda=args.lamda,
+              learning_rate=args.lr_a,
+              max_grad_norm=args.max_grad_norm)
     return ppo
 
 
 if __name__ == "__main__":
     args = parse_args()
+    
+    # 处理下游任务评估开关
+    if hasattr(args, 'enable_downstream'):
+        if args.enable_downstream.lower() in ['true', '1', 'yes', 'on']:
+            args.enable_downstream = True
+        else:
+            args.enable_downstream = False
+    else:
+        args.enable_downstream = True  # 默认开启
+
+    # 智能GPU设置 - 支持多GPU环境和自动分配
+    if hasattr(args, 'gpu_id') and args.gpu_id is not None and torch.cuda.is_available():
+        # 如果指定了GPU ID，设置可见设备但让PyTorch自动处理分配
+        if args.gpu_id < torch.cuda.device_count():
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
+            print(f'=> Setting CUDA_VISIBLE_DEVICES to GPU {args.gpu_id}')
+            print(f'=> PyTorch will handle device allocation automatically')
+        else:
+            print(f'=> Warning: GPU {args.gpu_id} not available (only {torch.cuda.device_count()} GPUs found)')
+            print(f'=> Using automatic GPU allocation instead')
+    else:
+        print('=> Using automatic multi-GPU allocation (if available)')
 
     if args.seed is not None:
         np.random.seed(args.seed)

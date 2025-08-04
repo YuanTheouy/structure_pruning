@@ -120,9 +120,14 @@ def eval_acc(model, task):
     return results["results"][task]['acc']
 
 # Function to evaluate perplexity (ppl) on a specified model and tokenizer
-def eval_ppl(model, tokenizer, device=torch.device("cuda:0")):
+def eval_ppl(model, tokenizer, device=None):
     # Set dataset
     dataset = "wikitext2"
+    
+    # 智能设备选择 - 使用模型实际所在的设备
+    if device is None:
+        device = next(model.parameters()).device
+        print(f"=> PPL evaluation using model device: {device}")
 
     # Print status
     # print(f"evaluating on {dataset}")

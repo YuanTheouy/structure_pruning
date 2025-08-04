@@ -19,6 +19,7 @@ GPU_ID=0           # 默认使用GPU 0
 EXP_ID=0           # 默认实验配置ID
 PRESERVE_RATIO=0.7 # 默认保留比例
 TRAIN_EPISODES=3000 # 默认训练轮数
+ENABLE_DOWNSTREAM=true # 默认开启下游任务评估
 SHOW_HELP=false
 
 while [[ $# -gt 0 ]]; do
@@ -38,6 +39,14 @@ while [[ $# -gt 0 ]]; do
         --train-episodes)
             TRAIN_EPISODES="$2"
             shift 2
+            ;;
+        --enable-downstream)
+            ENABLE_DOWNSTREAM=true
+            shift
+            ;;
+        --disable-downstream)
+            ENABLE_DOWNSTREAM=false
+            shift
             ;;
         --help|-h)
             SHOW_HELP=true
@@ -59,24 +68,27 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --exp-id ID         指定实验配置ID (默认: 0)"
     echo "  --preserve-ratio R  指定保留比例 (默认: 0.7)"
     echo "  --train-episodes N  指定训练轮数 (默认: 3000)"
+    echo "  --enable-downstream 开启下游任务评估 (默认: 开启)"
+    echo "  --disable-downstream 关闭下游任务评估"
     echo "  --help, -h          显示此帮助信息"
     echo ""
     echo "示例:"
-    echo "  $0                              # 使用默认设置"
+    echo "  $0                              # 使用默认设置(开启下游任务)"
     echo "  $0 --gpu-id 1                   # 使用GPU 1"
+    echo "  $0 --disable-downstream         # 关闭下游任务评估"
     echo "  $0 --exp-id 2 --preserve-ratio 0.8 # 实验配置2，保留比例80%"
-    echo "  $0 --train-episodes 5000        # 训练5000轮"
+    echo "  $0 --train-episodes 5000 --disable-downstream # 训练5000轮，不评估下游任务"
     exit 0
 fi
 
 # --- 2. 实验配置池 ---
 #                   ID:     0      1      2      3      4
-learning_rates=(          1e-4   5e-4   1e-4   5e-4   2e-4)
-entropy_coeffs=(          0.01   0.01   0.05   0.05   0.02)
-learning_epochs=(         10     10     15     15     12)
-clip_params=(             0.2    0.1    0.2    0.1    0.15)
-seeds=(                   2025   2026   2027   2028   2029)
-num_collects=(            15     15     20     20     18)
+learning_rates=(          1e-4   5e-4   1e-4   5e-4)
+entropy_coeffs=(          0.01   0.01   0.05   0.05)
+learning_epochs=(         10     10     15     15)
+clip_params=(             0.2    0.1    0.2    0.1)
+seeds=(                   2025   2026   2027   2028)
+num_collects=(            15     15     20     20)
 
 # --- 3. 固定参数配置 ---
 MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-1.3b"
@@ -122,6 +134,7 @@ echo "     - 模型路径:         ${MODEL_PATH}"
 echo "     - 保留比例:         ${PRESERVE_RATIO}"
 echo "     - 剪枝类型:         ${PRUNE_TYPE}"
 echo "     - 训练轮数:         ${TRAIN_EPISODES}"
+echo "     - 下游任务评估:     $([ "$ENABLE_DOWNSTREAM" = true ] && echo "开启" || echo "关闭")"
 echo ""
 echo "     PPO超参数:"
 echo "     - 学习率:           ${LEARNING_RATE}"
@@ -160,8 +173,9 @@ python -u amc_searchPPO.py \
     --lr_a=${LEARNING_RATE} \
     --clip_param=${CLIP_PARAM} \
     --entropy_coef=${ENTROPY_COEF} \
-    --gpu-id=${GPU_ID} \
-    --output="${BASE_OUTPUT_DIR}"
+    --gpu_id=${GPU_ID} \
+    --output="${BASE_OUTPUT_DIR}" \
+    --enable_downstream="${ENABLE_DOWNSTREAM}"
 
 # --- 9. 训练完成提示 ---
 TRAINING_EXIT_CODE=$?

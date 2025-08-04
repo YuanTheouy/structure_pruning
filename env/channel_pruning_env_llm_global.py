@@ -128,8 +128,28 @@ class ChannelPruningEnv:
         self.model_path = args.model
         self._get_model()
 
-        # 动态设置设备，自动适应单卡/多卡环境
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 智能设备分配 - 自动适应单GPU/多GPU环境
+        # 优先使用模型实际所在的设备，支持多GPU并行
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            print(f"=> Detected {gpu_count} GPU(s) available")
+            
+            # 获取模型实际所在的设备
+            model_device = next(self.model.parameters()).device
+            self.device = model_device
+            print(f"=> Model automatically assigned to device: {self.device}")
+            
+            # 如果是多GPU环境，显示设备映射信息
+            if hasattr(self.model, 'hf_device_map') and self.model.hf_device_map:
+                print("=> Multi-GPU device mapping detected:")
+                for module, device in self.model.hf_device_map.items():
+                    if isinstance(device, (int, str)) and str(device).startswith(('cuda', 'cpu')):
+                        print(f"   {module}: {device}")
+            
+        else:
+            self.device = torch.device("cpu")
+            print(f"=> Using CPU device (CUDA not available)")
+            
         self.dataset = args.dataset_name
         self.n_data_worker = n_data_worker
         self.batch_size = batch_size
@@ -202,12 +222,37 @@ class ChannelPruningEnv:
 
 
     def _get_model_local(self):
+        # 智能设备映射 - 支持多GPU自动分配
+        gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        
+        if gpu_count == 0:
+            device_map = "cpu"
+            print("=> Using CPU (no GPU available)")
+        elif gpu_count == 1:
+            device_map = "auto"  # 单GPU使用auto即可
+            print("=> Single GPU environment - using automatic mapping")
+        else:
+            # 多GPU环境 - 让transformers自动分配
+            device_map = "auto"
+            print(f"=> Multi-GPU environment ({gpu_count} GPUs) - using balanced automatic mapping")
+            
+        # 如果用户指定了GPU ID，我们仍然支持，但会警告这不是推荐做法
+        if hasattr(self.args, 'gpu_id') and self.args.gpu_id is not None and torch.cuda.is_available():
+            if self.args.gpu_id < gpu_count:
+                print(f"=> WARNING: GPU ID specified ({self.args.gpu_id}), but auto-mapping is recommended for better performance")
+                print(f"=> Proceeding with automatic mapping for optimal memory utilization")
+            else:
+                print(f"=> WARNING: Specified GPU {self.args.gpu_id} not available (only {gpu_count} GPUs detected)")
+                print(f"=> Using automatic mapping instead")
+            
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             torch_dtype=torch.float16,
             cache_dir=self.args.cache_dir,
             low_cpu_mem_usage=True,
-            device_map="balanced_low_0"
+            device_map=device_map,
+            max_memory=None,  # 让transformers自动决定
+            offload_folder=None,  # 不使用磁盘offload除非必要
         )
         self.model.seqlen = 2048
 
@@ -735,9 +780,13 @@ class ChannelPruningEnv:
         
         torch.cuda.empty_cache()
 
+        # 智能设备选择 - 使用模型embedding层所在的设备
         device = self.device
-        if "model.embed_tokens" in self.model.hf_device_map:
+        if hasattr(self.model, 'hf_device_map') and "model.embed_tokens" in self.model.hf_device_map:
             device = self.model.hf_device_map["model.embed_tokens"]
+        elif hasattr(self.model, 'model') and hasattr(self.model.model, 'embed_tokens'):
+            # 直接从embedding层获取设备
+            device = next(self.model.model.embed_tokens.parameters()).device
 
         dtype = next(iter(self.model.parameters())).dtype
         inps = torch.zeros((self.n_samples, self.model.seqlen, self.model.config.hidden_size), dtype=dtype, device=device)
@@ -778,9 +827,13 @@ class ChannelPruningEnv:
 
         torch.cuda.empty_cache()
 
+        # 智能设备选择 - 使用模型embedding层所在的设备
         device = self.device
-        if "model.embed_tokens" in self.model.hf_device_map:
+        if hasattr(self.model, 'hf_device_map') and "model.embed_tokens" in self.model.hf_device_map:
             device = self.model.hf_device_map["model.embed_tokens"]
+        elif hasattr(self.model, 'model') and hasattr(self.model.model, 'embed_tokens'):
+            # 直接从embedding层获取设备
+            device = next(self.model.model.embed_tokens.parameters()).device
 
         dtype = next(iter(self.model.parameters())).dtype
         inps = torch.zeros((self.n_samples, self.model.seqlen, self.model.config.hidden_size), dtype=dtype, device=device)
@@ -1029,11 +1082,15 @@ class ChannelPruningEnv:
         """使用轻量级评估器进行评估"""
         try:
             print("=> Using lightweight evaluation implementation")
-            print("=> Tasks: BoolQ, PIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA")
-            evaluator_light = LightweightEvaluator(model, self.tokenizer, self.device)
+            print("=> Setting up model for downstream evaluation...")
+            evaluator_light = LightweightEvaluator(model, self.tokenizer, device=None)
             
+            print("=> Starting evaluation with 50 samples per task...")
             # 进行评估
             results = evaluator_light.evaluate_all(num_samples_per_task=50)
+            
+            print("=> Evaluation completed successfully!")
+            print(f"=> Total results obtained: {len(results)} items")
             
             # 显示结果
             print("\n=> Downstream Task Results (lightweight):")
@@ -1067,10 +1124,13 @@ class ChannelPruningEnv:
             if "avg_score" in results:
                 print(f"\n=> Average downstream task performance: {results['avg_score']:.4f}")
             
+            print("=> Downstream task evaluation completed successfully")
             return True
             
         except Exception as e:
             print(f"=> Lightweight evaluation failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise e
 
     def _simple_generation_test(self, model):
@@ -1106,17 +1166,24 @@ class ChannelPruningEnv:
     def _validate(self, model):
         ppl = eval_ppl(model, self.tokenizer)
         
-        # 下游任务评估 - 使用新版框架，失败时不终止程序
-        print("=> Attempting downstream task evaluation...")
-        try:
-            success = self.test_model(model)
-            if success:
-                print("=> Downstream task evaluation completed successfully")
-            else:
-                print("=> Downstream task evaluation completed with warnings")
-        except Exception as e:
-            print(f"=> WARNING: Downstream evaluation encountered an error: {str(e)}")
-            print("=> Continuing with PPL-only validation...")
+        # 检查是否开启下游任务评估
+        enable_downstream = getattr(self.args, 'enable_downstream', True)
+        
+        if enable_downstream:
+            # 下游任务评估 - 使用新版框架，失败时不终止程序
+            print("=> Attempting downstream task evaluation...")
+            try:
+                success = self.test_model(model)
+                if success:
+                    print("=> Downstream task evaluation completed successfully")
+                else:
+                    print("=> Downstream task evaluation completed with warnings")
+            except Exception as e:
+                print(f"=> WARNING: Downstream evaluation encountered an error: {str(e)}")
+                print("=> Continuing with PPL-only validation...")
+        else:
+            print("=> Downstream task evaluation is disabled")
+            print("=> Using PPL-only validation")
         
         return ppl
 

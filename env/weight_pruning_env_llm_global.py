@@ -42,7 +42,16 @@ class WeightPruningEnv:
         self.model_path = args.model
         self._get_model()
 
-        self.device = torch.device("cuda:0")
+        # 智能设备分配 - 让PyTorch自动处理设备分配
+        if torch.cuda.is_available():
+            # 获取模型实际所在的设备
+            model_device = next(self.model.parameters()).device
+            self.device = model_device
+            print(f"=> Auto-detected model device: {self.device}")
+        else:
+            self.device = torch.device("cpu")
+            print(f"=> Using CPU device (CUDA not available)")
+            
         self.dataset = args.dataset_name
         # self.n_data_worker = n_data_worker
         self.batch_size = batch_size

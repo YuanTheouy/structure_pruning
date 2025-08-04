@@ -61,7 +61,16 @@ class ChannelPruningEnv:
         self.model_path = args.model
         self._get_model()
 
-        # device = torch.device("cuda:0")
+        # 智能设备分配 - 让PyTorch自动处理设备分配
+        if torch.cuda.is_available():
+            # 获取模型实际所在的设备
+            model_device = next(self.model.parameters()).device
+            self.device = model_device
+            print(f"=> Auto-detected model device: {self.device}")
+        else:
+            self.device = torch.device("cpu")
+            print(f"=> Using CPU device (CUDA not available)")
+            
         self.dataset = args.dataset_name
         self.n_data_worker = n_data_worker
         self.batch_size = batch_size
@@ -667,8 +676,9 @@ class ChannelPruningEnv:
         
         torch.cuda.empty_cache()
 
-        device = torch.device("cuda:0")
-        if "model.embed_tokens" in self.model.hf_device_map:
+        # 使用动态设备或从模型的device_map中获取
+        device = self.device if hasattr(self, 'device') else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if hasattr(self.model, 'hf_device_map') and "model.embed_tokens" in self.model.hf_device_map:
             device = self.model.hf_device_map["model.embed_tokens"]
 
         dtype = next(iter(self.model.parameters())).dtype
@@ -710,8 +720,9 @@ class ChannelPruningEnv:
 
         torch.cuda.empty_cache()
 
-        device = torch.device("cuda:0")
-        if "model.embed_tokens" in self.model.hf_device_map:
+        # 使用动态设备或从模型的device_map中获取
+        device = self.device if hasattr(self, 'device') else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if hasattr(self.model, 'hf_device_map') and "model.embed_tokens" in self.model.hf_device_map:
             device = self.model.hf_device_map["model.embed_tokens"]
 
         dtype = next(iter(self.model.parameters())).dtype
