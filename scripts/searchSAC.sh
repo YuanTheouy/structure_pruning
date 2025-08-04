@@ -1,0 +1,20 @@
+python amc_searchSAC.py \
+    --job=train \
+    --model=/home/lisiqi/amc-LLM/model/opt-1.3b \
+    --model_name=opt-1.3b\
+    --dataset_name=wikitext2\
+    --preserve_ratio=0.7 \
+    --use_real_val\
+    --prune=para \
+    --structure\
+    --lbound=0.2 \
+    --rbound=1 \
+    --n_samples=256\
+    --auto-alpha=1 \
+    --warmup=50\
+    --acc_metric=acc1 \
+    --reward=reward_ppl \
+    --train_episode=3000 \
+    --bsize=256 \
+    --seed=2024\
+    --export_path=./checkpoints/opt13b_wikitext2_export.pth.tar

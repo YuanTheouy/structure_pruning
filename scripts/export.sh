@@ -1,0 +1,21 @@
+python amc_searchPPO.py \
+    --job=export \
+    --model=/public/experiments/wjt/llama/llama1-7b \
+    --model_name=llama1-7b \
+    --dataset_name=wikitext2\
+    --ratios=1.0,1.0,0.3125,0.3382086,1.0,1.0,1.0,1.0,1.0,0.8551054,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.56213665,1.0,0.65697676,1.0,0.3403888,1.0,1.0,1.0,0.67369187,1.0,1.0,1.0,1.0,1.0,0.30014536,1.0,0.80078125,1.0,1.0,1.0,1.0,1.0,0.91233647,1.0,1.0,0.3125,0.6395349,1.0,0.33284885,1.0,1.0,1.0,0.99654794,1.0,0.3131359,1.0,0.30141714,1.0,0.45603198,1.0,0.3133176,1.0,1.0,0.3125,0.35192588,1.0,0.30366102\
+    --preserve_ratio=0.8 \
+    --use_real_val\
+    --prune=para \
+    --structure \
+    --lbound=0.2 \
+    --m=3 \
+    --recon \
+    --recon_sample=64 \
+    --rbound=1 \
+    --n_samples=64\
+    --use_real_val \
+    --acc_metric=acc1 \
+    --reward=reward_ppl \
+    --seed=2024\
+    --export_path=./checkpoints/llama1-7b_wikitext2_export.pth.tar

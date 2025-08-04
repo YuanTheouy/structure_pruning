@@ -1,0 +1,20 @@
+python amc_searchPPO.py \
+    --job=export \
+    --model=/home/theo/data/yx_repository/01_Models/opt-1.3b \
+    --model_name=opt-1.3b \
+    --dataset_name=wikitext2\
+    --preserve_ratio=0.7 \
+    --ratios=1.0,1.0,0.2,0.42443848,1.0,0.4267578,1.0,1.0,1.0,1.0,0.2,0.24560547,1.0,0.2,1.0,0.2,1.0,0.3375244,1.0,1.0,1.0,0.57995605,1.0,0.6843262,1.0,0.2,1.0,1.0,1.0,0.5048828,1.0,0.92004395,0.4375,0.64538574,1.0,0.93444824,1.0,1.0,1.0,0.38012695,1.0,0.6040039,1.0,0.5489502,1.0,0.64274186,0.2,0.20010805\
+    --use_real_val\
+    --prune=para \
+    --structure \
+    --recon \
+    --lbound=0.2 \
+    --rbound=1 \
+    --n_samples=64\
+    --recon_sample=32\
+    --use_real_val \
+    --acc_metric=acc1 \
+    --reward=reward_ppl \
+    --seed=2024\
+    --export_path=./checkpoints/opt-1.3b_piqa_export.pth.tar

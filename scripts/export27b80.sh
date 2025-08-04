@@ -1,0 +1,20 @@
+python amc_searchPPO.py \
+    --job=export \
+    --model=/home/lisiqi/amc-LLM/model/opt-2.7b \
+    --model_name=opt-2.7b \
+    --dataset_name=wikitext2\
+    --preserve_ratio=0.8 \
+    --ratios=1.0,0.9385742,1.0,0.106738284,1.0,1.0,0.40625,0.21298829,1.0,0.50693357,1.0,0.3178711,1.0,1.0,1.0,0.7890625,1.0,0.1,0.15625,0.5672852,1.0,1.0,1.0,0.86386716,0.21875,0.584375,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.39365235,1.0,1.0,1.0,1.0,1.0,0.6333984,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.1,1.0,0.16699219,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.61875,0.125,1.0,1.0,1.0\
+    --use_real_val\
+    --prune=para \
+    --structure \
+    --recon\
+    --lbound=0.2 \
+    --rbound=1 \
+    --n_samples=64\
+    --recon_sample=48\
+    --use_real_val \
+    --acc_metric=acc1 \
+    --reward=reward_ppl \
+    --seed=2024\
+    --export_path=./checkpoints/opt27b80_wikitext2_export.pth.tar
