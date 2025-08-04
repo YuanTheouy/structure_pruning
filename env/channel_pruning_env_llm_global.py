@@ -1029,19 +1029,43 @@ class ChannelPruningEnv:
         """使用轻量级评估器进行评估"""
         try:
             print("=> Using lightweight evaluation implementation")
+            print("=> Tasks: BoolQ, PIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA")
             evaluator_light = LightweightEvaluator(model, self.tokenizer, self.device)
             
             # 进行评估
             results = evaluator_light.evaluate_all(num_samples_per_task=50)
             
             # 显示结果
-            print("=> Downstream Task Results (lightweight):")
-            for task_name, score in results.items():
-                if task_name != "avg_score":
-                    print(f"   {task_name}: {score:.4f}")
+            print("\n=> Downstream Task Results (lightweight):")
+            
+            # 按任务类型分组显示
+            reasoning_tasks = ["boolq_acc", "piqa_acc", "hellaswag_acc"]
+            commonsense_tasks = ["winogrande_acc", "obqa_acc"]
+            science_tasks = ["arc_easy_acc", "arc_challenge_acc"]
+            
+            if any(task in results for task in reasoning_tasks):
+                print("   Reasoning Tasks:")
+                for task in reasoning_tasks:
+                    if task in results:
+                        task_name = task.replace("_acc", "").upper()
+                        print(f"     {task_name}: {results[task]:.4f}")
+            
+            if any(task in results for task in commonsense_tasks):
+                print("   Commonsense Tasks:")
+                for task in commonsense_tasks:
+                    if task in results:
+                        task_name = task.replace("_acc", "").title().replace("_", "-")
+                        print(f"     {task_name}: {results[task]:.4f}")
+                        
+            if any(task in results for task in science_tasks):
+                print("   Science Tasks:")
+                for task in science_tasks:
+                    if task in results:
+                        task_name = task.replace("_acc", "").replace("_", "-").upper()
+                        print(f"     {task_name}: {results[task]:.4f}")
             
             if "avg_score" in results:
-                print(f"=> Average downstream task performance: {results['avg_score']:.4f}")
+                print(f"\n=> Average downstream task performance: {results['avg_score']:.4f}")
             
             return True
             

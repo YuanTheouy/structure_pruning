@@ -159,6 +159,195 @@ class LightweightEvaluator:
         accuracy = correct / total if total > 0 else 0.0
         return {"hellaswag_acc": accuracy}
     
+    def evaluate_boolq(self, num_samples: int = 100) -> Dict[str, float]:
+        """评估BoolQ任务 - 布尔问答"""
+        # 简化的BoolQ样本
+        samples = [
+            {
+                "passage": "The Pacific Ocean is the largest ocean on Earth.",
+                "question": "Is the Pacific Ocean the largest ocean?",
+                "answer": True
+            },
+            {
+                "passage": "Cats are known for their ability to fly.",
+                "question": "Can cats fly?",
+                "answer": False
+            },
+            {
+                "passage": "Water boils at 100 degrees Celsius at sea level.",
+                "question": "Does water boil at 100 degrees Celsius?",
+                "answer": True
+            },
+            {
+                "passage": "The sun rises in the west and sets in the east.",
+                "question": "Does the sun rise in the west?",
+                "answer": False
+            },
+            {
+                "passage": "Python is a programming language.",
+                "question": "Is Python a programming language?",
+                "answer": True
+            }
+        ]
+        
+        # 重复样本以达到所需数量
+        while len(samples) < num_samples:
+            samples.extend(samples[:min(len(samples), num_samples - len(samples))])
+        samples = samples[:num_samples]
+        
+        correct = 0
+        total = 0
+        
+        print(f"Evaluating BoolQ with {len(samples)} samples...")
+        
+        for sample in tqdm(samples, desc="BoolQ"):
+            try:
+                passage = sample['passage']
+                question = sample['question']
+                
+                # 构建提示
+                prompt = f"Passage: {passage}\nQuestion: {question}\nAnswer:"
+                
+                # 计算两个选项的概率
+                true_text = f"{prompt} True"
+                false_text = f"{prompt} False"
+                
+                prob_true = self._get_text_probability(true_text)
+                prob_false = self._get_text_probability(false_text)
+                
+                predicted = prob_true > prob_false
+                if predicted == sample['answer']:
+                    correct += 1
+                total += 1
+                
+            except Exception as e:
+                print(f"Error in BoolQ evaluation: {e}")
+                continue
+        
+        accuracy = correct / total if total > 0 else 0.0
+        return {"boolq_acc": accuracy}
+
+    def evaluate_arc_easy(self, num_samples: int = 100) -> Dict[str, float]:
+        """评估ARC-Easy任务 - 简单科学推理"""
+        # 简化的ARC-Easy样本
+        samples = [
+            {
+                "question": "What happens to water when it is heated to 100°C?",
+                "choices": ["It freezes", "It boils", "It becomes solid", "It disappears"],
+                "answer": 1
+            },
+            {
+                "question": "Which planet is closest to the Sun?",
+                "choices": ["Earth", "Venus", "Mercury", "Mars"],
+                "answer": 2
+            },
+            {
+                "question": "What do plants need to make their own food?",
+                "choices": ["Only water", "Only sunlight", "Sunlight and water", "Only soil"],
+                "answer": 2
+            },
+            {
+                "question": "What is the main gas in the air we breathe?",
+                "choices": ["Oxygen", "Carbon dioxide", "Nitrogen", "Hydrogen"],
+                "answer": 2
+            },
+            {
+                "question": "What happens when you mix red and blue paint?",
+                "choices": ["Green", "Purple", "Yellow", "Orange"],
+                "answer": 1
+            }
+        ]
+        
+        return self._evaluate_multiple_choice("ARC-Easy", samples, num_samples)
+
+    def evaluate_arc_challenge(self, num_samples: int = 50) -> Dict[str, float]:
+        """评估ARC-Challenge任务 - 困难科学推理"""
+        # 简化的ARC-Challenge样本
+        samples = [
+            {
+                "question": "Which property of a mineral can be determined just by looking at it?",
+                "choices": ["hardness", "color", "melting point", "density"],
+                "answer": 1
+            },
+            {
+                "question": "A student is given a mixture of sand and salt. Which would be the best way to separate the mixture?",
+                "choices": ["heating the mixture", "adding water and filtering", "using a magnet", "shaking the mixture"],
+                "answer": 1
+            },
+            {
+                "question": "What causes the phases of the Moon?",
+                "choices": ["Earth's shadow on the Moon", "The Moon's rotation", "The Moon's position relative to Earth and Sun", "Clouds covering the Moon"],
+                "answer": 2
+            }
+        ]
+        
+        return self._evaluate_multiple_choice("ARC-Challenge", samples, num_samples)
+
+    def evaluate_obqa(self, num_samples: int = 100) -> Dict[str, float]:
+        """评估OBQA任务 - 开放书问答"""
+        # 简化的OBQA样本
+        samples = [
+            {
+                "question": "The sun is responsible for",
+                "choices": ["puppies learning new tricks", "children growing up and getting old", "flowers wilting in a garden", "plants and flowers blooming"],
+                "answer": 3
+            },
+            {
+                "question": "When food is reduced in the stomach",
+                "choices": ["the mind needs time to digest", "take a second to digest what I said", "nutrients are being deconstructed", "reader's digest is a magazine"],
+                "answer": 2
+            },
+            {
+                "question": "You can make a telescope with a",
+                "choices": ["stained glass window", "broken mirror", "paper towel tube", "kaleidoscope"],
+                "answer": 2
+            },
+            {
+                "question": "A thing's position is not altered when",
+                "choices": ["it's moving", "it's bent", "it's in a state of inaction", "it's falling"],
+                "answer": 2
+            }
+        ]
+        
+        return self._evaluate_multiple_choice("OBQA", samples, num_samples)
+
+    def _evaluate_multiple_choice(self, task_name: str, samples: List[Dict], num_samples: int) -> Dict[str, float]:
+        """通用的多选题评估方法"""
+        # 重复样本以达到所需数量
+        while len(samples) < num_samples:
+            samples.extend(samples[:min(len(samples), num_samples - len(samples))])
+        samples = samples[:num_samples]
+        
+        correct = 0
+        total = 0
+        
+        print(f"Evaluating {task_name} with {len(samples)} samples...")
+        
+        for sample in tqdm(samples, desc=task_name):
+            try:
+                question = sample['question']
+                choices = sample['choices']
+                
+                # 计算每个选项的概率
+                probs = []
+                for choice in choices:
+                    text = f"Question: {question}\nAnswer: {choice}"
+                    prob = self._get_text_probability(text)
+                    probs.append(prob)
+                
+                predicted = np.argmax(probs)
+                if predicted == sample['answer']:
+                    correct += 1
+                total += 1
+                
+            except Exception as e:
+                print(f"Error in {task_name} evaluation: {e}")
+                continue
+        
+        accuracy = correct / total if total > 0 else 0.0
+        task_key = task_name.lower().replace("-", "_") + "_acc"
+        return {task_key: accuracy}
+
     def evaluate_winogrande(self, num_samples: int = 50) -> Dict[str, float]:
         """评估Winogrande任务 - 代词消歧"""
         # 简化的Winogrande样本
@@ -244,39 +433,43 @@ class LightweightEvaluator:
             return float('-inf')
     
     def evaluate_all(self, num_samples_per_task: int = 100) -> Dict[str, float]:
-        """评估所有支持的任务"""
-        print("Starting lightweight downstream task evaluation...")
+        """评估所有支持的下游任务"""
+        print("Starting comprehensive lightweight downstream task evaluation...")
+        print("Tasks: BoolQ, PIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA")
         
         results = {}
         
-        try:
-            # PIQA
-            piqa_results = self.evaluate_piqa(num_samples_per_task)
-            results.update(piqa_results)
-        except Exception as e:
-            print(f"PIQA evaluation failed: {e}")
-            results["piqa_acc"] = 0.0
+        # 评估任务列表及其样本数量
+        tasks = [
+            ("BoolQ", self.evaluate_boolq, num_samples_per_task),
+            ("PIQA", self.evaluate_piqa, num_samples_per_task),
+            ("HellaSwag", self.evaluate_hellaswag, num_samples_per_task),
+            ("WinoGrande", self.evaluate_winogrande, max(1, num_samples_per_task // 2)),
+            ("ARC-Easy", self.evaluate_arc_easy, num_samples_per_task),
+            ("ARC-Challenge", self.evaluate_arc_challenge, max(1, num_samples_per_task // 2)),
+            ("OBQA", self.evaluate_obqa, num_samples_per_task)
+        ]
         
-        try:
-            # HellaSwag
-            hellaswag_results = self.evaluate_hellaswag(num_samples_per_task)
-            results.update(hellaswag_results)
-        except Exception as e:
-            print(f"HellaSwag evaluation failed: {e}")
-            results["hellaswag_acc"] = 0.0
-        
-        try:
-            # Winogrande
-            winogrande_results = self.evaluate_winogrande(num_samples_per_task // 2)
-            results.update(winogrande_results)
-        except Exception as e:
-            print(f"Winogrande evaluation failed: {e}")
-            results["winogrande_acc"] = 0.0
+        for task_name, eval_func, sample_count in tasks:
+            try:
+                print(f"\n=> Evaluating {task_name}...")
+                task_results = eval_func(sample_count)
+                results.update(task_results)
+                
+                # 显示单个任务结果
+                for key, value in task_results.items():
+                    print(f"   {key}: {value:.4f}")
+                    
+            except Exception as e:
+                print(f"{task_name} evaluation failed: {e}")
+                # 为失败的任务添加默认值
+                task_key = task_name.lower().replace("-", "_") + "_acc"
+                results[task_key] = 0.0
         
         # 计算平均分
-        valid_scores = [v for v in results.values() if v > 0]
-        if valid_scores:
-            results["avg_score"] = sum(valid_scores) / len(valid_scores)
+        accuracy_scores = [v for k, v in results.items() if k.endswith('_acc')]
+        if accuracy_scores:
+            results["avg_score"] = sum(accuracy_scores) / len(accuracy_scores)
         else:
             results["avg_score"] = 0.0
         
