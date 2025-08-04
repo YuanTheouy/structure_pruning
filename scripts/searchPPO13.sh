@@ -175,7 +175,8 @@ python -u amc_searchPPO.py \
     --entropy_coef=${ENTROPY_COEF} \
     --gpu_id=${GPU_ID} \
     --output="${BASE_OUTPUT_DIR}" \
-    --enable_downstream="${ENABLE_DOWNSTREAM}"
+    --enable_downstream="${ENABLE_DOWNSTREAM}" \
+    --use_new_input
 
 # --- 9. 训练完成提示 ---
 TRAINING_EXIT_CODE=$?

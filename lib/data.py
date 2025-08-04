@@ -35,6 +35,20 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     trainenc = tokenizer(" ".join(traindata['text']), return_tensors='pt')
     testenc = tokenizer("\n\n".join(testdata['text']), return_tensors='pt')
 
+    # 检查token ID范围
+    vocab_size = tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else len(tokenizer.get_vocab())
+    print(f"=> Tokenizer vocab size: {vocab_size}")
+    
+    max_token_id = trainenc.input_ids.max().item()
+    min_token_id = trainenc.input_ids.min().item()
+    print(f"=> Train data token ID range: [{min_token_id}, {max_token_id}]")
+    
+    if max_token_id >= vocab_size or min_token_id < 0:
+        print(f"=> 警告: 训练数据包含超出词汇表范围的token ID")
+        print(f"=> 将token ID限制在有效范围内: [0, {vocab_size-1}]")
+        trainenc.input_ids = torch.clamp(trainenc.input_ids, 0, vocab_size - 1)
+        testenc.input_ids = torch.clamp(testenc.input_ids, 0, vocab_size - 1)
+
     # Generate samples from training set
     random.seed(seed)
     trainloader = []

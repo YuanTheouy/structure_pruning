@@ -51,14 +51,12 @@ def _load_lmeval():
         LMEVAL_AVAILABLE = True
         print("=> Using full lm-eval-harness framework")
         return "full"
-    except ImportError as e:
-        print(f"=> lm-eval-harness not available: {e}")
-    except Exception as e:
-        print(f"=> lm-eval-harness compatibility issue: {e}")
-        compatibility = _check_transformers_compatibility()
-        if not compatibility:
-            print("=> This is likely due to transformers version compatibility")
-            print(f"=> Current transformers version may need upgrade (>=4.40 recommended)")
+    except ImportError:
+        # 静默处理ImportError，直接尝试轻量级实现
+        pass
+    except Exception:
+        # 静默处理其他兼容性问题
+        pass
     
     # 回退到轻量级评估实现
     try:
@@ -67,8 +65,7 @@ def _load_lmeval():
         LIGHTWEIGHT_EVAL_AVAILABLE = True
         print("=> Using lightweight evaluation implementation")
         return "lightweight"
-    except ImportError as e:
-        print(f"=> Lightweight evaluator not available: {e}")
+    except ImportError:
         print("=> Continuing without downstream task evaluation")
         return "none"
 from sklearn.metrics import pairwise_distances
@@ -334,7 +331,19 @@ class ChannelPruningEnv:
         reward = self.reward(ppl)
 
         info_set = {'compress_ratio': compress_ratio, 'para_ratio': para_ratio, 'ppl': ppl, 'strategy': self.action.copy()}
-        obs = np.array(self.preserve_ratio, dtype=np.float32)
+        
+        # 在剪枝完成后，安全地获取观察值
+        if self.use_new_input:
+            # 剪枝完成后，返回最后一个有效的状态
+            # 计算当前应该处理的模块索引，但要确保不超出范围
+            if hasattr(self, 'state') and len(self.state) > 0:
+                # 返回最后一个模块的状态作为终止状态
+                obs = self.state[-1]  # 使用最后一个模块的特征向量
+            else:
+                # 如果没有状态信息，创建一个8维的零向量
+                obs = np.zeros(8, dtype=np.float32)
+        else:
+            obs = np.array(self.preserve_ratio, dtype=np.float32)
 
         if reward > self.best_reward:
             self.best_reward = reward
@@ -698,7 +707,13 @@ class ChannelPruningEnv:
         self.d_prime_list = []
         self._get_model_local()
 
-        obs = np.array(self.preserve_ratio, dtype=np.float32)
+        # 根据是否使用新输入特征返回相应的观察
+        if self.use_new_input and hasattr(self, 'state'):
+            # 返回第一个模块的特征向量（layer 0, head attention）
+            obs = self.state[self.layer_idx * 2 + int(not self.head)]
+        else:
+            obs = np.array(self.preserve_ratio, dtype=np.float32)
+        
         return obs
 
 
@@ -867,8 +882,36 @@ class ChannelPruningEnv:
 
         return inps, outs, attention_mask, position_ids
 
+    def _generate_prunable_module_names(self):
+        """
+        生成可剪枝模块的名称列表，供 FeatureExtractor 使用
+        """
+        self.prunable_module_names = []
+        print("=> Generating prunable module names for FeatureExtractor...")
+        
+        # 根据模型类型确定层的访问路径
+        if "opt" in self.model.config.model_type.lower():
+            layer_prefix = "model.decoder.layers"
+        else:
+            # 为其他模型（如Llama）提供一个通用路径
+            layer_prefix = "model.layers"
+
+        for i in range(self.num_hidden_layers):
+            # 注意力模块 (MHA)
+            self.prunable_module_names.append(f"{layer_prefix}.{i}.self_attn")
+            # 前馈网络 (FFN) - OPT使用fc1, Llama使用gate_proj
+            if "opt" in self.model.config.model_type.lower():
+                self.prunable_module_names.append(f"{layer_prefix}.{i}.fc1")
+            else:
+                self.prunable_module_names.append(f"{layer_prefix}.{i}.gate_proj")
+        
+        print(f"=> Found {len(self.prunable_module_names)} prunable modules.")
+
 
     def _extract_layer_information(self):
+        # 首先生成可剪枝模块名称列表
+        self._generate_prunable_module_names()
+        
         with torch.no_grad():
             if "OPT" in self.model.__class__.__name__:
                 print('Experiments with OPT models')
@@ -1170,8 +1213,7 @@ class ChannelPruningEnv:
         enable_downstream = getattr(self.args, 'enable_downstream', True)
         
         if enable_downstream:
-            # 下游任务评估 - 使用新版框架，失败时不终止程序
-            print("=> Attempting downstream task evaluation...")
+            # 下游任务评估 - 使用智能框架选择，失败时不终止程序
             try:
                 success = self.test_model(model)
                 if success:
@@ -1186,4 +1228,18 @@ class ChannelPruningEnv:
             print("=> Using PPL-only validation")
         
         return ppl
+
+    def set_static_state(self, static_state_tensor: torch.Tensor):
+        """
+        接收并存储由 FeatureExtractor 计算出的静态状态张量
+        """
+        print("=> Environment received static state tensor.")
+        self.static_state_tensor = static_state_tensor.to(self.device)
+        print(f"=> Static state tensor shape: {self.static_state_tensor.shape}")
+        
+        # 将静态状态张量转换为numpy数组并设置为环境状态
+        # 每一行对应一个可剪枝模块的特征向量
+        self.state = self.static_state_tensor.cpu().numpy()
+        print(f"=> Environment state set with shape: {self.state.shape}")
+        print(f"=> Each module has {self.state.shape[1]} features")
 

@@ -16,6 +16,8 @@ from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian
 from lib.utils import get_output_folder
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
+from feature_extractor import FeatureExtractor
+from lib.data import get_loaders
 
 
 def parse_args():
@@ -90,7 +92,7 @@ def parse_args():
     parser.add_argument('--gpu_id', default=0, type=int, help='GPU device ID to use')
     
     # Downstream task evaluation
-    parser.add_argument('--enable_downstream', default='true', type=str, 
+    parser.add_argument('--enable_downstream', default='false', type=str, 
                         help='Enable downstream task evaluation (true/false)')
 
     parser.add_argument('--learning_epoch', default=10, type=int, help='')
@@ -149,12 +151,27 @@ def train(num_episode, agent, env, output):
             with torch.inference_mode():
                 if observation is None:
                     observation = deepcopy(env.reset())
+                    # observation = np.expand_dims(observation, 0) # State is now a matrix
+                
+                # If using new features, observation is a single feature vector, need to add batch dimension
+                if not args.use_new_input:
                     observation = np.expand_dims(observation, 0)
+                else:
+                    # For new input features, ensure we have the correct batch dimension
+                    if observation.ndim == 1:
+                        observation = np.expand_dims(observation, 0)
+
                 action = agent.act(observation)
                 # action = np.expand_dims(action)
                 # env response with next_observation, reward, terminate_info
                 next_observation, reward, done, info = env.step(np.squeeze(action))
-                next_observation = np.expand_dims(next_observation, 0)
+                
+                if not args.use_new_input:
+                    next_observation = np.expand_dims(next_observation, 0)
+                else:
+                    # For new input features, ensure we have the correct batch dimension
+                    if next_observation.ndim == 1:
+                        next_observation = np.expand_dims(next_observation, 0)
 
                 # [optional] save intermideate model
                 if episode % int(num_episode / 100) == 0:
@@ -305,6 +322,45 @@ if __name__ == "__main__":
 
     
     if args.job == 'train':
+        # === 集成 FeatureExtractor ===
+        if args.use_new_input:
+            print("=> Using new input features, starting FeatureExtractor...")
+            # 1. 从环境中获取数据加载器和可剪枝模块列表
+            # 注意：环境在初始化时已经准备好了数据加载器
+            # 我们需要重新获取一个数据加载器，因为环境中的加载器可能不适合特征提取
+            # 使用正确的参数调用 get_loaders
+            train_loader, val_loader = get_loaders(
+                name=args.dataset_name,
+                nsamples=args.n_samples,
+                seed=args.seed,
+                seqlen=env.model.seqlen,
+                tokenizer=env.tokenizer
+            )
+            
+            prunable_modules = env.prunable_module_names
+            
+            # 2. 创建并运行 FeatureExtractor（极致内存优化）
+            print("=> Initializing FeatureExtractor...")
+            # 极大减少样本数以避免显存不足
+            max_samples_for_features = min(8, args.n_samples // 8)  # 使用1/8的样本或最多8个
+            print(f"=> 极致内存优化：使用 {max_samples_for_features} 个样本进行特征提取")
+            
+            feature_extractor = FeatureExtractor(
+                model=env.model,
+                dataloader=train_loader,  # 使用训练集进行特征提取
+                prunable_module_names=prunable_modules,
+                max_samples=max_samples_for_features
+            )
+            
+            print("=> Extracting features...")
+            static_state_tensor = feature_extractor.extract()
+            
+            # 3. 将提取的特征设置到环境中
+            print("=> Setting static state in the environment...")
+            env.set_static_state(static_state_tensor)
+            print("=> Feature extraction and setup complete.")
+        # ==========================
+
         env.set_export_path(args.export_path)
         # build folder and logs
         base_folder_name = '{}_{}_r{}_search'.format(args.model_name, args.dataset_name, args.preserve_ratio)
@@ -316,7 +372,11 @@ if __name__ == "__main__":
         text_writer = open(os.path.join(args.output, 'log.txt'), 'w')
         print('=> Output path: {}...'.format(args.output))
 
-        nb_states = 1
+        if args.use_new_input:
+            nb_states = 8  # FeatureExtractor generates 8 features per module
+        else:
+            nb_states = 1
+        
         if args.structure:
             nb_actions = env.num_hidden_layers * 2  # head and ffn
         else:
