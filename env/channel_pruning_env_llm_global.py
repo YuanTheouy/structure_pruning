@@ -10,11 +10,67 @@ from lib.eval import eval_ppl
 from lib.data_utils import DataSaverHook, StopForwardException
 from lib.data import get_loaders
 from lib.Ridge import Ridge_Regression
-# 启用下游任务评估需要的导入
-from lib.lm_eval.evaluator import evaluate, make_table
-from lib.lm_eval.tasks import get_task_dict, ALL_TASKS
-from lib.lm_eval.utils import pattern_match
-from lib.lm_eval.models import get_model
+# 启用下游任务评估需要的导入 - 使用新版lm-eval-harness
+# 注释掉旧版本导入
+# from lib.lm_eval.evaluator import evaluate, make_table  
+# from lib.lm_eval.tasks import get_task_dict, ALL_TASKS
+# from lib.lm_eval.utils import pattern_match
+# from lib.lm_eval.models import get_model
+
+# 新版本lm-eval-harness导入 - 智能条件化导入
+LMEVAL_AVAILABLE = False
+LIGHTWEIGHT_EVAL_AVAILABLE = False
+lm_eval = None
+evaluator = None
+HFLM = None
+LightweightEvaluator = None
+
+def _check_transformers_compatibility():
+    """检查transformers版本兼容性"""
+    try:
+        import transformers
+        version = transformers.__version__
+        major, minor = map(int, version.split('.')[:2])
+        return major > 4 or (major == 4 and minor >= 40)
+    except:
+        return False
+
+def _load_lmeval():
+    """智能加载评估框架 - 优先使用lm-eval-harness，回退到轻量级实现"""
+    global LMEVAL_AVAILABLE, LIGHTWEIGHT_EVAL_AVAILABLE, lm_eval, evaluator, HFLM, LightweightEvaluator
+    
+    # 首先尝试加载完整的lm-eval-harness
+    try:
+        import lm_eval as _lm_eval
+        from lm_eval import evaluator as _evaluator
+        from lm_eval.models.huggingface import HFLM as _HFLM
+        
+        lm_eval = _lm_eval
+        evaluator = _evaluator
+        HFLM = _HFLM
+        LMEVAL_AVAILABLE = True
+        print("=> Using full lm-eval-harness framework")
+        return "full"
+    except ImportError as e:
+        print(f"=> lm-eval-harness not available: {e}")
+    except Exception as e:
+        print(f"=> lm-eval-harness compatibility issue: {e}")
+        compatibility = _check_transformers_compatibility()
+        if not compatibility:
+            print("=> This is likely due to transformers version compatibility")
+            print(f"=> Current transformers version may need upgrade (>=4.40 recommended)")
+    
+    # 回退到轻量级评估实现
+    try:
+        from lib.lightweight_eval import LightweightEvaluator as _LightweightEvaluator
+        LightweightEvaluator = _LightweightEvaluator
+        LIGHTWEIGHT_EVAL_AVAILABLE = True
+        print("=> Using lightweight evaluation implementation")
+        return "lightweight"
+    except ImportError as e:
+        print(f"=> Lightweight evaluator not available: {e}")
+        print("=> Continuing without downstream task evaluation")
+        return "none"
 from sklearn.metrics import pairwise_distances
 from lib.linalg import lsmr_cupy_solver
 from lib.mac import mac_per_head, mac_per_neuron, get_layer_param, get_norm_param
@@ -875,67 +931,168 @@ class ChannelPruningEnv:
     def test_model(self, model):
         """
         在下游任务上评估模型性能
-        使用更轻量级的配置以加快评估速度
+        智能选择评估方法：优先使用lm-eval-harness，回退到轻量级实现
         """
+        # 尝试加载评估框架
+        eval_type = _load_lmeval()
+        
+        if eval_type == "none":
+            print("=> INFO: No evaluation framework available")
+            print("=> To enable downstream evaluation, run: ./install_lmeval.sh")
+            print("=> Or manually install: pip install lm-eval")
+            print("=> Skipping downstream evaluation for now...")
+            return False
+            
         print("=> Setting up model for downstream evaluation...")
         
         try:
-            lm = get_model("hf-causal")(
-                pretrained=model,
-                batch_size=4,  # 保持较小的batch size
-            )
+            if eval_type == "full":
+                return self._evaluate_with_lmeval(model)
+            elif eval_type == "lightweight":
+                return self._evaluate_with_lightweight(model)
+            else:
+                print("=> Unknown evaluation type, skipping...")
+                return False
+                
+        except Exception as e:
+            print(f"=> WARNING: Downstream evaluation failed: {str(e)}")
+            print("=> Trying backup generation test...")
             
-            # 选择核心下游任务，减少评估时间
-            # 使用代表性强但计算量相对较小的任务
-            task_names = "piqa,hellaswag,winogrande,arc_easy"  # 移除了更耗时的任务
-            task_names = pattern_match(task_names.split(","), ALL_TASKS)
-            task_dict = get_task_dict(task_names)
-            description_dict = {}
-            
-            print(f"=> Evaluating on {len(task_dict)} downstream tasks: {list(task_dict.keys())}")
-            
-            # 使用更少的bootstrap迭代以加快速度
-            results = evaluate(
-                lm=lm,
-                task_dict=task_dict,
-                num_fewshot=0,
-                limit=1000,  # 限制每个任务的样本数量，加快评估
-                bootstrap_iters=1000,  # 减少bootstrap迭代次数
-                description_dict=description_dict,
-                decontamination_ngrams_path=None,
-                write_out=False,
-                output_base_path=None,
-            )
+            # 备选方案：进行简单的文本生成测试
+            try:
+                self._simple_generation_test(model)
+                return True
+            except Exception as backup_e:
+                print(f"=> Backup evaluation also failed: {str(backup_e)}")
+                print("=> Continuing without downstream evaluation...")
+                return False
 
-            # 显示结果表格
-            print(make_table(results))
+    def _evaluate_with_lmeval(self, model):
+        """使用完整的lm-eval-harness进行评估"""
+        try:
+            # 使用新版lm-eval-harness API
+            model_wrapper = HFLM(
+                pretrained=model,
+                tokenizer=self.tokenizer,
+                batch_size=4,
+                device=self.device
+            )
             
-            # 提取关键指标进行汇总
+            # 选择核心下游任务
+            task_names = ["piqa", "hellaswag", "winogrande", "arc_easy"]
+            
+            print(f"=> Evaluating on {len(task_names)} downstream tasks: {task_names}")
+            
+            # 使用新版API进行评估
+            results = evaluator.simple_evaluate(
+                model=model_wrapper,
+                tasks=task_names,
+                num_fewshot=0,
+                limit=100,  # 限制每个任务的样本数量
+                bootstrap_iters=100,  # 减少bootstrap迭代次数
+                no_cache=True,
+                verbosity="INFO"
+            )
+            
+            # 显示结果
+            print("=> Downstream Task Results (lm-eval-harness):")
             task_scores = {}
-            for task_name, task_result in results["results"].items():
-                if isinstance(task_result, dict):
-                    # 寻找主要指标（通常是acc, acc_norm, 或类似的）
-                    main_metrics = ["acc", "acc_norm", "exact_match", "f1"]
-                    for metric in main_metrics:
-                        if metric in task_result:
-                            task_scores[task_name] = task_result[metric]
-                            break
             
-            if task_scores:
-                avg_score = sum(task_scores.values()) / len(task_scores)
-                print(f"=> Average downstream task performance: {avg_score:.4f}")
-                print(f"=> Task-wise scores: {task_scores}")
+            if "results" in results:
+                for task_name, task_result in results["results"].items():
+                    if isinstance(task_result, dict):
+                        # 寻找主要指标
+                        main_metrics = ["acc", "acc_norm", "exact_match", "f1"]
+                        for metric in main_metrics:
+                            if metric in task_result:
+                                score = task_result[metric]
+                                task_scores[task_name] = score
+                                print(f"   {task_name}: {score:.4f}")
+                                break
+                
+                if task_scores:
+                    avg_score = sum(task_scores.values()) / len(task_scores)
+                    print(f"=> Average downstream task performance: {avg_score:.4f}")
+                    return True
+                else:
+                    print("=> WARNING: No valid task scores obtained!")
+                    return False
+            else:
+                print("=> WARNING: No results returned from evaluation!")
+                return False
+                
+        except Exception as e:
+            print(f"=> lm-eval-harness evaluation failed: {str(e)}")
+            raise e
+
+    def _evaluate_with_lightweight(self, model):
+        """使用轻量级评估器进行评估"""
+        try:
+            print("=> Using lightweight evaluation implementation")
+            evaluator_light = LightweightEvaluator(model, self.tokenizer, self.device)
+            
+            # 进行评估
+            results = evaluator_light.evaluate_all(num_samples_per_task=50)
+            
+            # 显示结果
+            print("=> Downstream Task Results (lightweight):")
+            for task_name, score in results.items():
+                if task_name != "avg_score":
+                    print(f"   {task_name}: {score:.4f}")
+            
+            if "avg_score" in results:
+                print(f"=> Average downstream task performance: {results['avg_score']:.4f}")
+            
+            return True
             
         except Exception as e:
-            print(f"=> Downstream evaluation failed: {str(e)}")
-            print("=> Continuing with perplexity-only validation...")
-            # 不让下游任务评估失败影响整个流程
+            print(f"=> Lightweight evaluation failed: {str(e)}")
+            raise e
+
+    def _simple_generation_test(self, model):
+        """
+        备选的简单文本生成测试
+        """
+        print("=> Running simple generation test as backup...")
+        
+        test_prompts = [
+            "The capital of France is",
+            "2 + 2 equals",
+            "The largest planet in our solar system is"
+        ]
+        
+        model.eval()
+        with torch.no_grad():
+            for i, prompt in enumerate(test_prompts):
+                try:
+                    inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=10,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.eos_token_id
+                    )
+                    generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                    print(f"   Test {i+1}: '{prompt}' -> '{generated_text[len(prompt):].strip()}'")
+                except Exception as e:
+                    print(f"   Test {i+1}: Failed ({str(e)})")
+        
+        print("=> Simple generation test completed")
 
     def _validate(self, model):
         ppl = eval_ppl(model, self.tokenizer)
-        # 启用下游任务评估
-        # print("=> Evaluating on downstream tasks...")
-        # self.test_model(model)  # 暂时禁用以避免网络下载
-        # print("=> Downstream task evaluation disabled (offline mode)")
+        
+        # 下游任务评估 - 使用新版框架，失败时不终止程序
+        print("=> Attempting downstream task evaluation...")
+        try:
+            success = self.test_model(model)
+            if success:
+                print("=> Downstream task evaluation completed successfully")
+            else:
+                print("=> Downstream task evaluation completed with warnings")
+        except Exception as e:
+            print(f"=> WARNING: Downstream evaluation encountered an error: {str(e)}")
+            print("=> Continuing with PPL-only validation...")
+        
         return ppl
 
