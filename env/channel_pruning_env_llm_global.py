@@ -351,15 +351,13 @@ class ChannelPruningEnv:
 
         info_set = {'compress_ratio': compress_ratio, 'para_ratio': para_ratio, 'ppl': ppl, 'strategy': self.action.copy()}
         
-        # 在剪枝完成后，安全地获取观察值
+        # --- 关键修正 ---
+        # 在函数的末尾，找到返回 observation 的地方
         if self.use_new_input:
-            # 剪枝完成后，返回所有模块的特征向量拼接作为终止状态
-            if hasattr(self, 'state') and len(self.state) > 0:
-                obs = self.state.flatten().astype(np.float32)
-            else:
-                # 如果没有状态信息，创建一个48*8=384维的零向量
-                obs = np.zeros(48 * 8, dtype=np.float32)
+            # 因为状态是静态的，所以下一个状态就是当前状态
+            obs = self.state
         else:
+            # 旧的逻辑，保持不变
             obs = np.array(self.preserve_ratio, dtype=np.float32)
 
         if reward > self.best_reward:
@@ -724,11 +722,15 @@ class ChannelPruningEnv:
         self.d_prime_list = []
         self._get_model_local()
 
+        # --- 关键修正 ---
         # 根据是否使用新输入特征返回相应的观察
-        if self.use_new_input and hasattr(self, 'state'):
-            # 返回所有模块的特征向量拼接 (48个模块 × 8维特征 = 384维)
-            obs = self.state.flatten().astype(np.float32)
+        if self.use_new_input:
+            if not hasattr(self, 'state'):
+                raise RuntimeError("Environment state is not set. Please call set_static_state() before reset().")
+            # 直接返回在 set_static_state 中构建好的完整状态
+            obs = self.state
         else:
+            # 旧的逻辑，保持不变
             obs = np.array(self.preserve_ratio, dtype=np.float32)
         
         return obs
@@ -1246,21 +1248,22 @@ class ChannelPruningEnv:
         
         return ppl
 
-    def set_static_state(self, static_state_tensor: torch.Tensor):
+    def set_static_state(self, final_state_vector: np.ndarray):
         """
-        接收并存储由 FeatureExtractor 计算出的静态状态张量
+        接收并存储由主脚本组装好的、最终的、完整的静态状态向量。
+        
+        Args:
+            final_state_vector (np.ndarray): 主脚本筛选并拼接好的一维状态向量
         """
-        print("=> Environment received static state tensor.")
-        self.static_state_tensor = static_state_tensor.to(self.device)
-        print(f"=> Static state tensor shape: {self.static_state_tensor.shape}")
+        print("=> Environment received final static state vector.")
         
-        # 将静态状态张量转换为numpy数组并设置为环境状态
-        # 每一行对应一个可剪枝模块的特征向量
-        self.state = self.static_state_tensor.cpu().numpy()
-        print(f"=> Environment state set with shape: {self.state.shape}")
-        print(f"=> Each module has {self.state.shape[1]} features")
+        # 验证输入是否为一维向量
+        if final_state_vector.ndim != 1:
+            raise ValueError(f"Expected a 1D state vector, but got shape {final_state_vector.shape}")
+            
+        self.state = final_state_vector
+        self.state_dim = self.state.shape[0]
         
-        # 设置状态维度属性，供智能体使用
-        self.state_dim = self.state.size  # 所有特征拼接后的总维度 (48*8=384)
-        print(f"=> Environment state_dim set to: {self.state_dim}")
+        print(f"=> Final state assembled in env. Shape: {self.state.shape}")
+        print(f"=> Environment state_dim correctly set to: {self.state_dim}")
 
