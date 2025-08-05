@@ -16,7 +16,8 @@ from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian
 from lib.utils import get_output_folder
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
-from feature_extractor import FeatureExtractor
+from feature_extractor import FeatureOrchestrator  # 使用新的模块化特征编排器
+from feature_configs import get_config_by_name, PREDEFINED_CONFIGS  # 导入配置管理
 from lib.data import get_loaders
 
 
@@ -122,6 +123,9 @@ def parse_args():
     parser.add_argument('--use_new_input', dest='use_new_input', action='store_true', help='use new input feature')
     parser.add_argument('--state_mode', default=1, type=int, choices=[0, 1], 
                         help='Agent state mode: 0=global pruning ratio, 1=feature extraction state')
+    parser.add_argument('--feature_config', default='default', type=str, 
+                        choices=list(PREDEFINED_CONFIGS.keys()),
+                        help='Name of the feature configuration to use from feature_configs.py')
     parser.add_argument('--metric', default='input', type=str, help='input or wanda')
     parser.add_argument('--feat', default='mean', type=str, help='mean or flat')
 
@@ -345,46 +349,69 @@ if __name__ == "__main__":
 
     
     if args.job == 'train':
-        # === 集成 FeatureExtractor ===
+        # === 将原有的 if args.use_new_input: 块替换为以下内容 ===
         if args.use_new_input:
-            print("=> Using new input features, starting FeatureExtractor...")
-            # 1. 从环境中获取数据加载器和可剪枝模块列表
-            # 注意：环境在初始化时已经准备好了数据加载器
-            # 我们需要重新获取一个数据加载器，因为环境中的加载器可能不适合特征提取
-            # 使用正确的参数调用 get_loaders
-            train_loader, val_loader = get_loaders(
-                name=args.dataset_name,
-                nsamples=args.n_samples,
-                seed=args.seed,
-                seqlen=env.model.seqlen,
-                tokenizer=env.tokenizer
-            )
+            print("=> State Mode 1: Using feature-based state.")
             
+            # --- 1. 定义并获取特征配置 ---
+            # 主配置，用于计算并缓存所有可用特征
+            master_config = get_config_by_name('comprehensive') 
+            # 本次实验要使用的配置
+            exp_config = get_config_by_name(args.feature_config)
+            print(f"=> Using feature configuration: '{args.feature_config}'")
+
+            # --- 2. 准备数据加载器和模块列表 (逻辑不变) ---
+            train_loader, _ = get_loaders(
+                name=args.dataset_name, nsamples=args.n_samples,
+                seed=args.seed, seqlen=env.model.seqlen, tokenizer=env.tokenizer
+            )
             prunable_modules = env.prunable_module_names
-            
-            # 2. 创建并运行 FeatureExtractor（分批内存优化）
-            print("=> Initializing FeatureExtractor...")
-            # 
-            max_samples_for_features = min(64, args.n_samples)  # 
-            print(f"=> 超级内存保守模式：使用 {max_samples_for_features} 个样本进行特征提取")
-            print(f"=> 说明：分层处理 + 逐样本推理 + 极限内存清理")
-            
-            feature_extractor = FeatureExtractor(
-                model=env.model,
-                dataloader=train_loader,  # 使用训练集进行特征提取
+
+            # --- 3. 计算/加载 "母版" 特征张量 ---
+            # 使用"全面配置"来确保一次性计算并缓存所有特征
+            print("=> Initializing orchestrator with 'comprehensive' config to get all features...")
+            orchestrator = FeatureOrchestrator(
+                model=env.model, dataloader=train_loader,
                 prunable_module_names=prunable_modules,
-                max_samples=max_samples_for_features,
-                cache_dir=os.path.join(args.output, "feature_cache")  # 使用输出目录下的缓存文件夹
+                feature_config=master_config,
+                max_samples=min(64, args.n_samples),
+                cache_dir=os.path.join(args.output, "feature_cache")
             )
+            master_features_tensor = orchestrator.extract() # Shape: [num_modules, num_all_features]
+
+            # --- 4. 根据实验配置筛选特征 (核心步骤) ---
+            print(f"=> Selecting features based on '{args.feature_config}' config...")
             
-            print("=> Extracting features...")
-            static_state_tensor = feature_extractor.extract()
+            # 获取所有可用特征的名称顺序
+            all_feature_names = [f.name for f in orchestrator.active_module_features]
             
-            # 3. 将提取的特征设置到环境中
-            print("=> Setting static state in the environment...")
-            env.set_static_state(static_state_tensor)
-            print("=> Feature extraction and setup complete.")
-        # ==========================
+            # 找出本次实验需要保留的特征的索引
+            selected_indices = [
+                i for i, name in enumerate(all_feature_names) 
+                if exp_config.get(name, False)
+            ]
+            
+            # 从母版张量中筛选出本次实验所需的特征列
+            selected_features_tensor = master_features_tensor[:, selected_indices]
+            
+            print(f"   Selected {len(selected_indices)} features out of {len(all_feature_names)}.")
+            print(f"   Final module features shape: {selected_features_tensor.shape}")
+
+            # --- 5. 组装最终的全局状态向量 ---
+            # 将筛选后的模块特征扁平化
+            state_features_flat = selected_features_tensor.flatten()
+            
+            # 获取全局保留率
+            preserve_ratio_tensor = torch.tensor([env.preserve_ratio], dtype=torch.float32)
+
+            # 拼接成最终的、完整的状态向量
+            final_state_vector = torch.cat((state_features_flat, preserve_ratio_tensor))
+            
+            # --- 6. 将最终状态设置到环境中 ---
+            print("=> Setting final assembled static state in the environment...")
+            env.set_static_state(final_state_vector.numpy())
+            print("=> Feature extraction, selection, and setup complete.")
+        # =======================================================
 
         env.set_export_path(args.export_path)
         # build folder and logs

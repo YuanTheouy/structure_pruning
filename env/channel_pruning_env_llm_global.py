@@ -726,7 +726,10 @@ class ChannelPruningEnv:
         # 根据是否使用新输入特征返回相应的观察
         if self.use_new_input:
             if not hasattr(self, 'state'):
-                raise RuntimeError("Environment state is not set. Please call set_static_state() before reset().")
+                # 如果在初始化阶段还没有设置状态，返回一个占位符
+                # 主脚本稍后会调用 set_static_state() 设置真实状态
+                print("=> Reset called during initialization, returning placeholder.")
+                return np.array([0.0], dtype=np.float32)  # 返回占位符
             # 直接返回在 set_static_state 中构建好的完整状态
             obs = self.state
         else:

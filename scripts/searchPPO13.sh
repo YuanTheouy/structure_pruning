@@ -20,7 +20,7 @@ EXP_ID=0           # 默认实验配置ID
 PRESERVE_RATIO=0.7 # 默认保留比例
 TRAIN_EPISODES=3000 # 默认训练轮数
 ENABLE_DOWNSTREAM=false # 默认关闭下游任务评估
-STATE_MODE=0       # 默认使用特征提取的状态 (0=全局剪枝率, 1=特征提取状态)
+STATE_MODE=1       # 默认使用特征提取的状态 (0=全局剪枝率, 1=特征提取状态)
 FEATURE_CONFIG="default" # 默认使用默认特征配置 (default/basic/attention/comprehensive/minimal/activation)
 SHOW_HELP=false
 
