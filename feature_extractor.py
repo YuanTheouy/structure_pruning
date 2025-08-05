@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FeatureExtractor - LLM 模块功能画像特征提取器
+FeatureExtractor - LLM 模块功能画像特征提取器 (模块化重构版)
 
-该模块为强化学习剪枝项目提供核心功能：在训练开始前，通过一次离线计算，
-提取出 LLM 中每一个可剪枝模块的功能画像特征，输出二维张量作为智能体的静态输入状态。
+该模块为强化学习剪枝项目提供核心功能：通过模块化的特征编排器和可插拔的特征模块，
+灵活地提取 LLM 中每一个可剪枝模块的功能画像特征，输出二维张量作为智能体的静态输入状态。
 
 作者: AI Assistant
 创建时间: 2025年8月4日
+重构时间: 2025年8月5日
 """
 
 import torch
@@ -20,33 +21,280 @@ import os
 import hashlib
 import json
 from datetime import datetime
+from abc import ABC, abstractmethod, abstractproperty
 
 
-class FeatureExtractor:
+# =============================================================================
+# 抽象基类定义
+# =============================================================================
+
+class BaseFeature(ABC):
     """
-    LLM 模块功能画像特征提取器
+    特征模块的抽象基类
     
-    该类用于从大语言模型中提取可剪枝模块（MHA和FFN）的功能特征，
-    包括激活模式、注意力分布、稀疏性等多维度特征，为后续的强化学习剪枝提供输入状态。
+    所有具体的特征模块都必须继承此类并实现相应的接口。
+    """
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """返回特征的名称字符串"""
+        pass
+    
+    @property
+    @abstractmethod
+    def feature_dim(self) -> int:
+        """返回该特征的维度"""
+        pass
+    
+    @abstractmethod
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """
+        根据预收集的统计数据，计算并返回特征张量
+        
+        Args:
+            module_stats (dict): 单个模块的统计数据
+            global_stats (dict): 全局统计数据
+            
+        Returns:
+            torch.Tensor: 计算得到的特征张量
+        """
+        pass
+
+
+# =============================================================================
+# 具体特征模块类
+# =============================================================================
+
+class NormalizedLayerIndexFeature(BaseFeature):
+    """计算归一化的层索引特征"""
+    
+    @property
+    def name(self) -> str:
+        return "normalized_layer_index"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算归一化的层索引"""
+        layer_idx = module_stats.get('layer_index', 0)
+        max_layers = global_stats.get('total_layers', 1)
+        normalized_idx = layer_idx / max(max_layers - 1, 1)
+        return torch.tensor([normalized_idx], dtype=torch.float32)
+
+
+class ModuleTypeFeature(BaseFeature):
+    """计算模块类型特征 (0 for MHA, 1 for FFN)"""
+    
+    @property
+    def name(self) -> str:
+        return "module_type"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算模块类型"""
+        is_attention = module_stats.get('has_attention', False)
+        module_type = 0.0 if is_attention else 1.0
+        return torch.tensor([module_type], dtype=torch.float32)
+
+
+class LogActivationNormFeature(BaseFeature):
+    """计算 log(1 + 激活L2范数)"""
+    
+    @property
+    def name(self) -> str:
+        return "log_activation_norm"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算log激活范数"""
+        l2_norm = module_stats.get('l2_norm_sum', 0.0)
+        sample_count = global_stats.get('sample_count', 1)
+        avg_l2_norm = l2_norm / max(sample_count, 1)
+        log_norm = torch.log(1.0 + avg_l2_norm)
+        return torch.tensor([log_norm], dtype=torch.float32)
+
+
+class ActivationSparsityFeature(BaseFeature):
+    """计算激活稀疏度"""
+    
+    @property
+    def name(self) -> str:
+        return "activation_sparsity"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算激活稀疏度"""
+        sparsity_count = module_stats.get('sparsity_count', 0.0)
+        total_count = module_stats.get('count', 1.0)
+        sparsity = sparsity_count / max(total_count, 1.0)
+        return torch.tensor([sparsity], dtype=torch.float32)
+
+
+class ActivationEffectiveRankFeature(BaseFeature):
+    """计算激活矩阵的有效秩"""
+    
+    @property
+    def name(self) -> str:
+        return "activation_effective_rank"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算激活有效秩(基于统计数据的近似)"""
+        # 由于我们使用累积统计，这里使用方差作为有效秩的代理指标
+        count = module_stats.get('count', 1.0)
+        sum_val = module_stats.get('sum', 0.0)
+        sum_squared = module_stats.get('sum_squared', 0.0)
+        
+        if count > 1:
+            mean_val = sum_val / count
+            variance = (sum_squared / count) - (mean_val ** 2)
+            # 使用方差的log作为有效秩的近似
+            effective_rank = torch.log(1.0 + torch.abs(variance))
+        else:
+            effective_rank = torch.tensor(0.0)
+        
+        return torch.tensor([effective_rank], dtype=torch.float32)
+
+
+class AttentionEntropyFeature(BaseFeature):
+    """计算注意力熵 (只对MHA有效，否则返回0)"""
+    
+    @property
+    def name(self) -> str:
+        return "attention_entropy"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算注意力熵"""
+        if not module_stats.get('has_attention', False):
+            return torch.tensor([0.0], dtype=torch.float32)
+        
+        attn_entropy_sum = module_stats.get('attn_entropy_sum', 0.0)
+        attn_count = module_stats.get('attn_count', 1.0)
+        avg_entropy = attn_entropy_sum / max(attn_count, 1.0)
+        return torch.tensor([avg_entropy], dtype=torch.float32)
+
+
+class AttentionLocalityScoreFeature(BaseFeature):
+    """计算注意力局部性得分 (只对MHA有效，否则返回0)"""
+    
+    @property
+    def name(self) -> str:
+        return "attention_locality"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算注意力局部性得分"""
+        if not module_stats.get('has_attention', False):
+            return torch.tensor([0.0], dtype=torch.float32)
+        
+        attn_locality_sum = module_stats.get('attn_locality_sum', 0.0)
+        attn_count = module_stats.get('attn_count', 1.0)
+        avg_locality = attn_locality_sum / max(attn_count, 1.0)
+        return torch.tensor([avg_locality], dtype=torch.float32)
+
+
+class AttentionDiversityFeature(BaseFeature):
+    """计算MHA内部所有头的注意力模式平均相异度 (只对MHA有效，否则返回0)"""
+    
+    @property
+    def name(self) -> str:
+        return "attention_diversity"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算注意力多样性(1 - 平均余弦相似度的近似)"""
+        if not module_stats.get('has_attention', False):
+            return torch.tensor([0.0], dtype=torch.float32)
+        
+        # 使用最大注意力权重作为多样性的反向指标
+        attn_max_sum = module_stats.get('attn_max_sum', 0.0)
+        attn_count = module_stats.get('attn_count', 1.0)
+        avg_max_attn = attn_max_sum / max(attn_count, 1.0)
+        # 多样性 = 1 - 最大权重(权重越集中，多样性越低)
+        diversity = 1.0 - avg_max_attn
+        return torch.tensor([diversity], dtype=torch.float32)
+
+
+class GLUGatingRatioFeature(BaseFeature):
+    """计算FFN门控单元的平均开放度 (只对FFN有效，否则返回0)"""
+    
+    @property
+    def name(self) -> str:
+        return "glu_gating_ratio"
+    
+    @property
+    def feature_dim(self) -> int:
+        return 1
+    
+    def calculate(self, module_stats: dict, global_stats: dict) -> torch.Tensor:
+        """计算GLU门控比例"""
+        if module_stats.get('has_attention', False):
+            return torch.tensor([0.0], dtype=torch.float32)
+        
+        # 使用正激活比例作为门控开放度的代理
+        positive_count = module_stats.get('positive_count', 0.0)
+        total_count = module_stats.get('count', 1.0)
+        gating_ratio = positive_count / max(total_count, 1.0)
+        return torch.tensor([gating_ratio], dtype=torch.float32)
+
+
+
+# =============================================================================
+# 特征编排器主类
+# =============================================================================
+
+class FeatureOrchestrator:
+    """
+    LLM 模块功能画像特征编排器 (重构版)
+    
+    该类使用模块化的特征系统，根据配置动态加载和组合不同的特征模块，
+    为每个可剪枝模块生成综合的功能特征向量，供强化学习剪枝使用。
     """
     
     def __init__(self, 
                  model: nn.Module, 
                  dataloader, 
                  prunable_module_names: List[str],
+                 feature_config: Dict[str, bool],
                  max_samples: Optional[int] = 8,
-                 cache_dir: str = "./feature_cache"):  # 添加缓存目录参数
+                 cache_dir: str = "./feature_cache"):
         """
-        初始化特征提取器
+        初始化特征编排器
         
         Args:
             model (nn.Module): 待分析的 PyTorch 模型
             dataloader: 校准数据集的数据加载器
             prunable_module_names (List[str]): 可剪枝模块名称列表
-            max_samples (Optional[int]): 最大样本数量，默认为8（极致内存优化）
+            feature_config (Dict[str, bool]): 特征配置字典，指定要启用的特征模块
+            max_samples (Optional[int]): 最大样本数量，默认为8
             cache_dir (str): 特征缓存目录
         """
-        print(f"=> 初始化FeatureExtractor，最大样本数: {max_samples}")
+        print(f"=> 初始化FeatureOrchestrator，最大样本数: {max_samples}")
         
         # 显示初始化前的内存状态
         if torch.cuda.is_available():
@@ -56,6 +304,7 @@ class FeatureExtractor:
         self.model = model
         self.dataloader = dataloader
         self.prunable_module_names = prunable_module_names
+        self.feature_config = feature_config
         self.cache_dir = cache_dir
         
         # 创建缓存目录
@@ -65,18 +314,45 @@ class FeatureExtractor:
         self.device = next(model.parameters()).device
         print(f"=> 模型设备: {self.device}")
         
+        # 初始化可用的特征模块类
+        self.available_features = {
+            'normalized_layer_index': NormalizedLayerIndexFeature,
+            'module_type': ModuleTypeFeature,
+            'log_activation_norm': LogActivationNormFeature,
+            'activation_sparsity': ActivationSparsityFeature,
+            'activation_effective_rank': ActivationEffectiveRankFeature,
+            'attention_entropy': AttentionEntropyFeature,
+            'attention_locality': AttentionLocalityScoreFeature,
+            'attention_diversity': AttentionDiversityFeature,
+            'glu_gating_ratio': GLUGatingRatioFeature,
+        }
+        
+        # 根据配置动态实例化启用的特征模块
+        self.active_module_features = []
+        total_feature_dim = 0
+        
+        print(f"=> 特征配置: {feature_config}")
+        for feature_name, enabled in feature_config.items():
+            if enabled and feature_name in self.available_features:
+                feature_class = self.available_features[feature_name]
+                feature_instance = feature_class()
+                self.active_module_features.append(feature_instance)
+                total_feature_dim += feature_instance.feature_dim
+                print(f"   ✓ 启用特征: {feature_name} (维度: {feature_instance.feature_dim})")
+        
+        print(f"=> 总特征维度: {total_feature_dim}")
+        
         # 内存优化：使用累积统计而不是存储原始数据
-        # 进一步减少内存占用
         self.running_stats: Dict[str, Dict[str, torch.Tensor]] = {}
         self.feature_vectors: Dict[str, torch.Tensor] = {}
         self.handles: List = []
         
         # 特征计算相关参数
         self.sparsity_threshold = 1e-5
-        self.max_samples = max_samples  # 使用传入的参数
+        self.max_samples = max_samples
         self.current_sample_count = 0
         
-        # 生成缓存键和文件路径
+        # 生成缓存键和文件路径(包含特征配置)
         self.cache_key = self._generate_cache_key()
         self.cache_file = os.path.join(cache_dir, f"features_{self.cache_key}.pt")
         print(f"=> 缓存文件: {self.cache_file}")
@@ -90,6 +366,7 @@ class FeatureExtractor:
             print(f"=> 初始化后GPU内存: {post_init_memory:.2f} GB")
             print(f"=> 初始化内存增量: {post_init_memory - init_memory:.2f} GB")
     
+    
     def extract(self) -> torch.Tensor:
         """
         公开的主方法，使用分层特征提取避免内存爆炸，支持缓存
@@ -97,9 +374,10 @@ class FeatureExtractor:
         Returns:
             torch.Tensor: 形状为 [num_modules, num_features] 的最终状态张量
         """
-        print("开始分层特征提取流程...")
+        print("开始模块化分层特征提取流程...")
         print(f"=> 内存优化模式：最大样本数 {self.max_samples}")
         print(f"=> 分层处理模式：逐层提取特征以避免内存爆炸")
+        print(f"=> 启用的特征模块数: {len(self.active_module_features)}")
         
         # 首先尝试从缓存加载
         cached_features = self._load_features_from_cache()
@@ -114,7 +392,7 @@ class FeatureExtractor:
         # 保存到缓存
         self._save_features_to_cache(final_tensor)
         
-        print(f"分层特征提取完成！最终张量形状: {final_tensor.shape}")
+        print(f"模块化分层特征提取完成！最终张量形状: {final_tensor.shape}")
         return final_tensor
     
     def _layered_extract(self) -> torch.Tensor:
@@ -130,7 +408,6 @@ class FeatureExtractor:
         if torch.cuda.is_available():
             initial_memory = torch.cuda.memory_allocated() / 1024**3
             print(f"=> 初始GPU内存使用: {initial_memory:.2f} GB")
-            # 强制清理一次缓存
             torch.cuda.empty_cache()
             print(f"=> 清理缓存后GPU内存: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
         
@@ -166,7 +443,8 @@ class FeatureExtractor:
                     'attn_entropy_sum': torch.tensor(0.0),
                     'attn_locality_sum': torch.tensor(0.0),
                     'attn_max_sum': torch.tensor(0.0),
-                    'attn_count': torch.tensor(0.0)
+                    'attn_count': torch.tensor(0.0),
+                    'layer_index': self._extract_layer_number(module_name)
                 }
             
             # 注册当前层的钩子
@@ -200,37 +478,29 @@ class FeatureExtractor:
             
             print(f"   注册了 {len(current_handles)} 个钩子")
             
-            # 显示钩子注册后的内存
-            if torch.cuda.is_available():
-                hook_memory = torch.cuda.memory_allocated() / 1024**3
-                print(f"   钩子注册后GPU内存: {hook_memory:.2f} GB")
-            
             # 执行推理（只为当前层）
             self._inference_pass_for_layer(layer_idx + 1, len(layer_groups))
-            
-            # 显示推理后的内存
-            if torch.cuda.is_available():
-                inference_memory = torch.cuda.memory_allocated() / 1024**3
-                print(f"   推理完成后GPU内存: {inference_memory:.2f} GB")
             
             # 立即移除当前层钩子
             for handle in current_handles:
                 handle.remove()
             current_handles.clear()
             
-            # 显示钩子移除后的内存
-            if torch.cuda.is_available():
-                unhook_memory = torch.cuda.memory_allocated() / 1024**3
-                print(f"   钩子移除后GPU内存: {unhook_memory:.2f} GB")
+            # 计算当前层的特征（使用模块化方式）
+            global_stats = {
+                'total_layers': len(layer_groups),
+                'sample_count': self.current_sample_count
+            }
             
-            # 计算当前层的特征
             for module_name in layer_modules:
                 if module_name in current_stats:
-                    features = self._calculate_module_features(module_name, current_stats[module_name])
+                    features = self._calculate_module_features_modular(
+                        module_name, current_stats[module_name], global_stats)
                     all_features.append(features)
                 else:
                     # 如果模块没有统计数据，使用零向量
-                    all_features.append(torch.zeros(8, dtype=torch.float32))
+                    total_dim = sum(f.feature_dim for f in self.active_module_features)
+                    all_features.append(torch.zeros(total_dim, dtype=torch.float32))
             
             # 清理当前层数据
             current_stats.clear()
@@ -239,8 +509,6 @@ class FeatureExtractor:
             import gc
             gc.collect()
             torch.cuda.empty_cache()
-            if hasattr(torch.cuda, 'reset_peak_memory_stats'):
-                torch.cuda.reset_peak_memory_stats()
             
             # 显示清理后的内存
             if torch.cuda.is_available():
@@ -266,6 +534,56 @@ class FeatureExtractor:
             print(f"=> 特征提取完成，最终GPU内存: {final_total_memory:.2f} GB")
         
         return normalized_tensor
+    
+    def _calculate_module_features_modular(self, module_name: str, 
+                                         module_stats: dict, 
+                                         global_stats: dict) -> torch.Tensor:
+        """
+        使用模块化方式计算单个模块的特征向量
+        
+        Args:
+            module_name (str): 模块名称
+            module_stats (dict): 模块的统计数据
+            global_stats (dict): 全局统计数据
+            
+        Returns:
+            torch.Tensor: 该模块的特征向量
+        """
+        # 检查是否有数据
+        if module_stats['count'] == 0:
+            warnings.warn(f"模块 {module_name} 没有收集到数据")
+            total_dim = sum(f.feature_dim for f in self.active_module_features)
+            return torch.zeros(total_dim, dtype=torch.float32)
+        
+        feature_tensors = []
+        
+        # 遍历所有启用的特征模块，计算特征
+        for feature_module in self.active_module_features:
+            try:
+                feature_tensor = feature_module.calculate(module_stats, global_stats)
+                # 确保特征张量是正确的维度
+                if feature_tensor.numel() != feature_module.feature_dim:
+                    warnings.warn(f"特征 {feature_module.name} 的维度不匹配，"
+                                f"期望 {feature_module.feature_dim}，实际 {feature_tensor.numel()}")
+                    feature_tensor = torch.zeros(feature_module.feature_dim, dtype=torch.float32)
+                
+                feature_tensors.append(feature_tensor.view(-1))  # 确保是一维
+                
+            except Exception as e:
+                warnings.warn(f"计算特征 {feature_module.name} 时出错: {e}")
+                # 使用零向量作为备用
+                feature_tensors.append(torch.zeros(feature_module.feature_dim, dtype=torch.float32))
+        
+        # 拼接所有特征
+        if feature_tensors:
+            final_features = torch.cat(feature_tensors, dim=0)
+        else:
+            final_features = torch.zeros(1, dtype=torch.float32)
+        
+        # 清理NaN值
+        final_features = torch.nan_to_num(final_features, nan=0.0, posinf=1e6, neginf=-1e6)
+        
+        return final_features
     
     def _group_modules_by_layer(self) -> List[List[str]]:
         """
@@ -544,12 +862,12 @@ class FeatureExtractor:
     
     def _generate_cache_key(self) -> str:
         """
-        根据模型、数据集、样本数量等生成唯一的缓存键
+        根据模型、数据集、样本数量、特征配置等生成唯一的缓存键
         
         Returns:
             str: 缓存键字符串
         """
-        # 收集关键信息
+        # 收集关键信息，现在包含特征配置
         key_info = {
             'model_name': getattr(self.model.config, '_name_or_path', 'unknown_model'),
             'model_type': getattr(self.model.config, 'model_type', 'unknown_type'),
@@ -559,7 +877,9 @@ class FeatureExtractor:
             'max_samples': self.max_samples,
             'sparsity_threshold': self.sparsity_threshold,
             'prunable_modules': sorted(self.prunable_module_names),  # 排序确保一致性
-            'num_modules': len(self.prunable_module_names)
+            'num_modules': len(self.prunable_module_names),
+            'feature_config': sorted(self.feature_config.items()),  # 包含特征配置
+            'active_features': sorted([f.name for f in self.active_module_features])  # 实际启用的特征
         }
         
         # 转换为JSON字符串并生成哈希
@@ -573,6 +893,7 @@ class FeatureExtractor:
         print(f"   层数: {key_info['num_layers']}")
         print(f"   样本数: {key_info['max_samples']}")
         print(f"   模块数: {key_info['num_modules']}")
+        print(f"   启用特征: {key_info['active_features']}")
         print(f"   缓存键: {cache_key}")
         
         return cache_key
@@ -598,7 +919,10 @@ class FeatureExtractor:
                 'num_modules': len(self.prunable_module_names),
                 'feature_shape': list(features_tensor.shape),
                 'extraction_time': datetime.now().isoformat(),
-                'cache_key': self.cache_key
+                'cache_key': self.cache_key,
+                'feature_config': self.feature_config,  # 保存特征配置
+                'active_features': [f.name for f in self.active_module_features],  # 保存启用的特征
+                'total_feature_dim': sum(f.feature_dim for f in self.active_module_features)  # 保存总特征维度
             }
         }
         
@@ -606,6 +930,7 @@ class FeatureExtractor:
             torch.save(cache_data, self.cache_file)
             print(f"=> 特征已保存到缓存: {self.cache_file}")
             print(f"   张量形状: {features_tensor.shape}")
+            print(f"   启用特征: {cache_data['metadata']['active_features']}")
             print(f"   文件大小: {os.path.getsize(self.cache_file) / 1024:.2f} KB")
         except Exception as e:
             warnings.warn(f"保存缓存失败: {e}")
@@ -638,6 +963,7 @@ class FeatureExtractor:
             print(f"   张量形状: {features.shape}")
             print(f"   样本数: {metadata['max_samples']}")
             print(f"   模块数: {metadata['num_modules']}")
+            print(f"   启用特征: {metadata.get('active_features', 'N/A')}")
             
             return features
             
@@ -659,12 +985,17 @@ class FeatureExtractor:
             metadata = cache_data['metadata']
             
             # 验证关键参数是否匹配
+            current_active_features = sorted([f.name for f in self.active_module_features])
+            cached_active_features = sorted(metadata.get('active_features', []))
+            
             checks = [
                 metadata['max_samples'] == self.max_samples,
                 metadata['sparsity_threshold'] == self.sparsity_threshold,
                 metadata['num_modules'] == len(self.prunable_module_names),
                 metadata['prunable_modules'] == self.prunable_module_names,
-                metadata['cache_key'] == self.cache_key
+                metadata['cache_key'] == self.cache_key,
+                metadata.get('feature_config', {}) == self.feature_config,  # 验证特征配置
+                cached_active_features == current_active_features  # 验证启用的特征
             ]
             
             if not all(checks):
@@ -672,11 +1003,14 @@ class FeatureExtractor:
                 print(f"   样本数: {metadata['max_samples']} vs {self.max_samples}")
                 print(f"   模块数: {metadata['num_modules']} vs {len(self.prunable_module_names)}")
                 print(f"   缓存键: {metadata['cache_key']} vs {self.cache_key}")
+                print(f"   特征配置: {metadata.get('feature_config', {})} vs {self.feature_config}")
+                print(f"   启用特征: {cached_active_features} vs {current_active_features}")
                 return False
             
             # 验证特征张量形状
             features = cache_data['features']
-            expected_shape = (len(self.prunable_module_names), 8)
+            expected_feature_dim = sum(f.feature_dim for f in self.active_module_features)
+            expected_shape = (len(self.prunable_module_names), expected_feature_dim)
             if features.shape != expected_shape:
                 print(f"=> 特征张量形状不匹配: {features.shape} vs {expected_shape}")
                 return False
@@ -718,7 +1052,9 @@ class FeatureExtractor:
                         'max_samples': metadata.get('max_samples', 0),
                         'num_modules': metadata.get('num_modules', 0),
                         'extraction_time': metadata.get('extraction_time', 'unknown'),
-                        'cache_key': metadata.get('cache_key', 'unknown')
+                        'cache_key': metadata.get('cache_key', 'unknown'),
+                        'active_features': metadata.get('active_features', []),
+                        'feature_config': metadata.get('feature_config', {})
                     }
                     cache_files.append(file_info)
                     
@@ -735,7 +1071,7 @@ class FeatureExtractor:
         Args:
             cache_dir (str): 缓存目录路径
         """
-        cache_files = FeatureExtractor.list_cache_files(cache_dir)
+        cache_files = FeatureOrchestrator.list_cache_files(cache_dir)
         
         if not cache_files:
             print("没有找到缓存文件")
@@ -743,17 +1079,18 @@ class FeatureExtractor:
         
         print(f"\n缓存目录: {cache_dir}")
         print(f"缓存文件数量: {len(cache_files)}")
-        print("-" * 80)
-        print(f"{'文件名':<25} {'模型':<20} {'样本数':<8} {'模块数':<8} {'大小(KB)':<10} {'提取时间':<20}")
-        print("-" * 80)
+        print("-" * 100)
+        print(f"{'文件名':<25} {'模型':<20} {'样本数':<8} {'模块数':<8} {'大小(KB)':<10} {'启用特征数':<10} {'提取时间':<20}")
+        print("-" * 100)
         
         total_size = 0
         for info in cache_files:
+            feature_count = len(info.get('active_features', []))
             print(f"{info['filename']:<25} {info['model_name']:<20} {info['max_samples']:<8} "
-                  f"{info['num_modules']:<8} {info['size_kb']:<10.1f} {info['extraction_time'][:19]:<20}")
+                  f"{info['num_modules']:<8} {info['size_kb']:<10.1f} {feature_count:<10} {info['extraction_time'][:19]:<20}")
             total_size += info['size_kb']
         
-        print("-" * 80)
+        print("-" * 100)
         print(f"总缓存大小: {total_size:.1f} KB ({total_size/1024:.1f} MB)")
     
     @staticmethod
@@ -765,14 +1102,14 @@ class FeatureExtractor:
             cache_dir (str): 缓存目录路径
             confirm (bool): 是否需要确认
         """
-        cache_files = FeatureExtractor.list_cache_files(cache_dir)
+        cache_files = FeatureOrchestrator.list_cache_files(cache_dir)
         
         if not cache_files:
             print("没有找到缓存文件")
             return
         
         if confirm:
-            FeatureExtractor.print_cache_summary(cache_dir)
+            FeatureOrchestrator.print_cache_summary(cache_dir)
             response = input(f"\n确定要删除所有 {len(cache_files)} 个缓存文件吗？ (y/N): ")
             if response.lower() != 'y':
                 print("取消清理")
@@ -1160,6 +1497,69 @@ class FeatureExtractor:
         return normalized_tensor
 
 
+
+# =============================================================================
+# 便利函数和默认配置
+# =============================================================================
+
+def get_default_feature_config() -> Dict[str, bool]:
+    """
+    获取默认的特征配置
+    
+    Returns:
+        Dict[str, bool]: 默认特征配置字典
+    """
+    return {
+        'normalized_layer_index': True,
+        'module_type': True,
+        'log_activation_norm': True,
+        'activation_sparsity': True,
+        'activation_effective_rank': True,
+        'attention_entropy': True,
+        'attention_locality': True,
+        'attention_diversity': True,
+        'glu_gating_ratio': True,
+    }
+
+
+def create_feature_extractor(model: nn.Module, 
+                           dataloader, 
+                           prunable_module_names: List[str],
+                           feature_config: Optional[Dict[str, bool]] = None,
+                           max_samples: Optional[int] = 8,
+                           cache_dir: str = "./feature_cache") -> FeatureOrchestrator:
+    """
+    便利工厂函数，用于创建FeatureOrchestrator实例
+    
+    Args:
+        model (nn.Module): 待分析的 PyTorch 模型
+        dataloader: 校准数据集的数据加载器
+        prunable_module_names (List[str]): 可剪枝模块名称列表
+        feature_config (Optional[Dict[str, bool]]): 特征配置字典，如果为None则使用默认配置
+        max_samples (Optional[int]): 最大样本数量，默认为8
+        cache_dir (str): 特征缓存目录
+        
+    Returns:
+        FeatureOrchestrator: 配置好的特征编排器实例
+    """
+    if feature_config is None:
+        feature_config = get_default_feature_config()
+        print("=> 使用默认特征配置")
+    
+    return FeatureOrchestrator(
+        model=model,
+        dataloader=dataloader,
+        prunable_module_names=prunable_module_names,
+        feature_config=feature_config,
+        max_samples=max_samples,
+        cache_dir=cache_dir
+    )
+
+
+# 向后兼容的别名
+FeatureExtractor = FeatureOrchestrator
+
+
 if __name__ == '__main__':
     """
     使用示例和缓存管理工具
@@ -1172,11 +1572,11 @@ if __name__ == '__main__':
         
         if command == "list":
             print("特征缓存管理工具 - 列出缓存文件")
-            FeatureExtractor.print_cache_summary(cache_dir)
+            FeatureOrchestrator.print_cache_summary(cache_dir)
             
         elif command == "clear":
             print("特征缓存管理工具 - 清理缓存")
-            FeatureExtractor.clear_cache(cache_dir)
+            FeatureOrchestrator.clear_cache(cache_dir)
             
         elif command == "help":
             print("特征缓存管理工具")
@@ -1192,13 +1592,14 @@ if __name__ == '__main__':
         
         sys.exit(0)
     
-    print("FeatureExtractor 演示代码和缓存功能")
-    print("=" * 50)
+    print("FeatureOrchestrator 模块化特征提取演示代码和缓存功能")
+    print("=" * 60)
     
     # 缓存功能说明
-    print("缓存功能说明:")
+    print("模块化特征系统说明:")
+    print("- 使用可插拔的特征模块，根据配置灵活组合不同特征")
     print("- 特征提取完成后会自动保存到缓存文件")
-    print("- 缓存键基于模型、样本数、模块列表等参数生成")
+    print("- 缓存键基于模型、样本数、模块列表、特征配置等参数生成")
     print("- 下次相同配置时会自动从缓存加载，无需重新计算")
     print("- 缓存文件默认保存在 './feature_cache/' 目录")
     print()
@@ -1265,24 +1666,48 @@ if __name__ == '__main__':
     print(f"共识别出 {len(prunable_module_names)} 个可剪枝模块")
     """)
     
-    # 4. 运行特征提取（含缓存）
-    print("\n步骤 4: 运行特征提取（支持缓存）")
+    # 4. 配置特征模块
+    print("\n步骤 4: 配置特征模块")
     print("示例代码:")
     print("""
-    # 实例化特征提取器（支持缓存）
-    print("开始特征提取...")
-    extractor = FeatureExtractor(
+    # 配置要启用的特征模块
+    feature_config = {
+        'normalized_layer_index': True,      # 归一化层索引
+        'module_type': True,                 # 模块类型 (MHA/FFN)
+        'log_activation_norm': True,         # Log激活范数
+        'activation_sparsity': True,         # 激活稀疏度
+        'activation_effective_rank': True,   # 激活有效秩
+        'attention_entropy': True,           # 注意力熵
+        'attention_locality': True,          # 注意力局部性
+        'attention_diversity': True,         # 注意力多样性
+        'glu_gating_ratio': True,           # GLU门控比例
+    }
+    
+    print("启用的特征模块:")
+    for feature_name, enabled in feature_config.items():
+        if enabled:
+            print(f"  ✓ {feature_name}")
+    """)
+    
+    # 5. 运行特征提取（含缓存）
+    print("\n步骤 5: 运行模块化特征提取（支持缓存）")
+    print("示例代码:")
+    print("""
+    # 实例化特征编排器（支持缓存和模块化配置）
+    print("开始模块化特征提取...")
+    orchestrator = FeatureOrchestrator(
         model=model, 
         dataloader=dataloader, 
         prunable_module_names=prunable_module_names,
+        feature_config=feature_config,        # 新增：特征配置
         max_samples=32,
-        cache_dir="./my_feature_cache"  # 指定缓存目录
+        cache_dir="./my_feature_cache"        # 指定缓存目录
     )
     
     # 执行特征提取（会自动检查缓存）
-    state_tensor = extractor.extract()
+    state_tensor = orchestrator.extract()
     
-    print(f"特征提取完成！")
+    print(f"模块化特征提取完成！")
     print(f"最终状态张量形状: {state_tensor.shape}")
     print(f"张量统计信息:")
     print(f"  均值: {state_tensor.mean().item():.6f}")
@@ -1291,33 +1716,84 @@ if __name__ == '__main__':
     print(f"  最大值: {state_tensor.max().item():.6f}")
     """)
     
-    # 5. 缓存管理
-    print("\n步骤 5: 缓存管理")
+    # 6. 缓存管理
+    print("\n步骤 6: 缓存管理")
     print("示例代码:")
     print("""
     # 查看缓存文件
-    FeatureExtractor.print_cache_summary("./my_feature_cache")
+    FeatureOrchestrator.print_cache_summary("./my_feature_cache")
     
     # 列出缓存文件详情
-    cache_files = FeatureExtractor.list_cache_files("./my_feature_cache")
+    cache_files = FeatureOrchestrator.list_cache_files("./my_feature_cache")
     for file_info in cache_files:
         print(f"文件: {file_info['filename']}")
         print(f"模型: {file_info['model_name']}")
         print(f"样本数: {file_info['max_samples']}")
+        print(f"启用特征: {file_info['active_features']}")
         print(f"大小: {file_info['size_kb']:.1f} KB")
         print()
     
     # 清理缓存（可选）
-    # FeatureExtractor.clear_cache("./my_feature_cache")
+    # FeatureOrchestrator.clear_cache("./my_feature_cache")
+    """)
+    
+    # 7. 特征配置示例
+    print("\n步骤 7: 特征配置示例")
+    print("示例代码:")
+    print("""
+    # 示例：只使用基础特征
+    basic_config = {
+        'normalized_layer_index': True,
+        'module_type': True,
+        'log_activation_norm': True,
+        'activation_sparsity': True,
+        'activation_effective_rank': False,  # 禁用
+        'attention_entropy': False,          # 禁用
+        'attention_locality': False,         # 禁用
+        'attention_diversity': False,        # 禁用
+        'glu_gating_ratio': False,          # 禁用
+    }
+    
+    # 示例：只使用注意力相关特征
+    attention_only_config = {
+        'normalized_layer_index': True,
+        'module_type': True,
+        'log_activation_norm': False,
+        'activation_sparsity': False,
+        'activation_effective_rank': False,
+        'attention_entropy': True,           # 只启用注意力特征
+        'attention_locality': True,
+        'attention_diversity': True,
+        'glu_gating_ratio': False,
+    }
+    
+    # 使用不同配置会生成不同的缓存文件
+    orchestrator_basic = FeatureOrchestrator(
+        model=model, 
+        dataloader=dataloader, 
+        prunable_module_names=prunable_module_names,
+        feature_config=basic_config,
+        max_samples=32
+    )
+    
+    orchestrator_attention = FeatureOrchestrator(
+        model=model, 
+        dataloader=dataloader, 
+        prunable_module_names=prunable_module_names,
+        feature_config=attention_only_config,
+        max_samples=32
+    )
     """)
     
     # 使用建议
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("使用建议:")
     print("1. 根据具体模型调整 prunable_module_names")
-    print("2. 根据硬件情况调整 max_samples 参数")
-    print("3. 指定合适的缓存目录，避免磁盘空间不足")
-    print("4. 定期清理不需要的缓存文件")
-    print("5. 相同配置的训练会自动使用缓存，大幅节省时间")
+    print("2. 根据实验需求配置 feature_config，启用/禁用特征模块")
+    print("3. 根据硬件情况调整 max_samples 参数")
+    print("4. 指定合适的缓存目录，避免磁盘空间不足")
+    print("5. 定期清理不需要的缓存文件")
+    print("6. 相同配置的训练会自动使用缓存，大幅节省时间")
+    print("7. 不同特征配置会生成不同的缓存文件，便于消融实验")
     
-    print("\n特征提取器类定义完成！支持智能缓存功能！")
+    print("\n模块化特征提取器类定义完成！支持智能缓存和灵活配置！")

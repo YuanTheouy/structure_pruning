@@ -21,6 +21,7 @@ PRESERVE_RATIO=0.7 # 默认保留比例
 TRAIN_EPISODES=3000 # 默认训练轮数
 ENABLE_DOWNSTREAM=false # 默认关闭下游任务评估
 STATE_MODE=0       # 默认使用特征提取的状态 (0=全局剪枝率, 1=特征提取状态)
+FEATURE_CONFIG="default" # 默认使用默认特征配置 (default/basic/attention/comprehensive/minimal/activation)
 SHOW_HELP=false
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +54,10 @@ while [[ $# -gt 0 ]]; do
             STATE_MODE="$2"
             shift 2
             ;;
+        --feature-config)
+            FEATURE_CONFIG="$2"
+            shift 2
+            ;;
         --help|-h)
             SHOW_HELP=true
             shift
@@ -76,16 +81,26 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --enable-downstream 开启下游任务评估 (默认: 开启)"
     echo "  --disable-downstream 关闭下游任务评估"
     echo "  --state-mode MODE   指定Agent状态模式 (0=全局剪枝率, 1=特征提取状态, 默认: 1)"
+    echo "  --feature-config CFG 指定特征配置 (default/basic/attention/comprehensive/minimal/activation, 默认: default)"
     echo "  --help, -h          显示此帮助信息"
     echo ""
+    echo "特征配置说明:"
+    echo "  default      - 启用所有特征模块 (9维)"
+    echo "  basic        - 基础特征 (4维: 层索引+模块类型+激活范数+稀疏度)"
+    echo "  attention    - 注意力导向 (5维: 基础+注意力特征)"
+    echo "  comprehensive- 全面特征 (同default)"
+    echo "  minimal      - 最小特征 (2维: 仅层索引+模块类型)"
+    echo "  activation   - 激活导向 (6维: 基础+激活特征+门控特征)"
+    echo ""
     echo "示例:"
-    echo "  $0                              # 使用默认设置(特征提取状态)"
+    echo "  $0                              # 使用默认设置"
     echo "  $0 --gpu-id 1                   # 使用GPU 1"
     echo "  $0 --state-mode 0               # 使用全局剪枝率作为状态"
-    echo "  $0 --state-mode 1               # 使用特征提取状态(默认)"
+    echo "  $0 --state-mode 1 --feature-config basic # 使用基础特征配置"
+    echo "  $0 --feature-config attention   # 使用注意力导向特征"
     echo "  $0 --disable-downstream         # 关闭下游任务评估"
     echo "  $0 --exp-id 2 --preserve-ratio 0.8 # 实验配置2，保留比例80%"
-    echo "  $0 --train-episodes 5000 --state-mode 0 # 训练5000轮，使用全局剪枝率状态"
+    echo "  $0 --train-episodes 5000 --feature-config comprehensive # 训练5000轮，使用全面特征"
     exit 0
 fi
 
@@ -114,10 +129,11 @@ CLIP_PARAM=${clip_params[EXP_ID]}
 SEED=${seeds[EXP_ID]}
 NUM_COLLECT=${num_collects[EXP_ID]}
 
-# 根据状态模式设置USE_NEW_INPUT标志
-# 注意：现在不需要传递--use_new_input参数，因为它由--state_mode控制
+# 根据状态模式设置STATE_MODE_FLAG标志
 if [ "$STATE_MODE" = "1" ]; then
     STATE_MODE_FLAG="--state_mode=1"
+    # 添加特征配置参数
+    STATE_MODE_FLAG="$STATE_MODE_FLAG --feature_config=$FEATURE_CONFIG"
 else
     STATE_MODE_FLAG="--state_mode=0"
 fi
@@ -132,6 +148,24 @@ fi
 if [ "$STATE_MODE" != "0" ] && [ "$STATE_MODE" != "1" ]; then
     echo "  错误: 状态模式 '${STATE_MODE}' 无效。请使用 0(全局剪枝率) 或 1(特征提取状态)。"
     exit 1
+fi
+
+# 验证特征配置有效性(仅在状态模式1时)
+if [ "$STATE_MODE" = "1" ]; then
+    VALID_CONFIGS=("default" "basic" "attention" "comprehensive" "minimal" "activation")
+    VALID_CONFIG=false
+    for config in "${VALID_CONFIGS[@]}"; do
+        if [ "$FEATURE_CONFIG" = "$config" ]; then
+            VALID_CONFIG=true
+            break
+        fi
+    done
+    
+    if [ "$VALID_CONFIG" = false ]; then
+        echo "  错误: 特征配置 '${FEATURE_CONFIG}' 无效。"
+        echo "  可用配置: ${VALID_CONFIGS[*]}"
+        exit 1
+    fi
 fi
 
 # --- 5. 路径与文件命名 ---
@@ -158,6 +192,9 @@ echo "     - 剪枝类型:         ${PRUNE_TYPE}"
 echo "     - 训练轮数:         ${TRAIN_EPISODES}"
 echo "     - 下游任务评估:     $([ "$ENABLE_DOWNSTREAM" = true ] && echo "开启" || echo "关闭")"
 echo "     - 状态模式:         $([ "$STATE_MODE" = "0" ] && echo "全局剪枝率" || echo "特征提取状态")"
+if [ "$STATE_MODE" = "1" ]; then
+echo "     - 特征配置:         ${FEATURE_CONFIG}"
+fi
 echo ""
 echo "     PPO超参数:"
 echo "     - 学习率:           ${LEARNING_RATE}"
