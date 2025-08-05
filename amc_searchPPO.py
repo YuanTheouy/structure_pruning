@@ -3,6 +3,7 @@
 # {jilin, songhan}@mit.edu
 
 import os
+import sys
 import numpy as np
 import argparse
 from copy import deepcopy
@@ -305,18 +306,25 @@ if __name__ == "__main__":
     else:
         args.enable_downstream = True  # 默认开启
 
-    # 智能GPU设置 - 支持多GPU环境和自动分配
+    # 强制GPU绑定 - 确保每个进程严格使用指定GPU
+    # 严格GPU绑定 - 简单直接的方案
     if hasattr(args, 'gpu_id') and args.gpu_id is not None and torch.cuda.is_available():
-        # 如果指定了GPU ID，设置可见设备但让PyTorch自动处理分配
-        if args.gpu_id < torch.cuda.device_count():
-            os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
-            print(f'=> Setting CUDA_VISIBLE_DEVICES to GPU {args.gpu_id}')
-            print(f'=> PyTorch will handle device allocation automatically')
+        # 强制设置CUDA_VISIBLE_DEVICES，确保进程只能看到指定GPU
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
+        print(f'=> [STRICT GPU BINDING] CUDA_VISIBLE_DEVICES={args.gpu_id}')
+        print(f'=> Process will only see GPU {args.gpu_id}')
+        
+        # 由于只有一个GPU可见，PyTorch设备ID就是0
+        if torch.cuda.device_count() > 0:
+            torch.cuda.set_device(0)
+            print(f'=> PyTorch device set to cuda:0 (physical GPU {args.gpu_id})')
         else:
-            print(f'=> Warning: GPU {args.gpu_id} not available (only {torch.cuda.device_count()} GPUs found)')
-            print(f'=> Using automatic GPU allocation instead')
+            print(f'=> ERROR: No CUDA devices visible after setting CUDA_VISIBLE_DEVICES={args.gpu_id}')
+            sys.exit(1)
+    elif torch.cuda.is_available():
+        print('=> No GPU ID specified, using default GPU allocation')
     else:
-        print('=> Using automatic multi-GPU allocation (if available)')
+        print('=> CUDA not available, using CPU')
 
     if args.seed is not None:
         np.random.seed(args.seed)

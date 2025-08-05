@@ -180,6 +180,11 @@ export HF_EVALUATE_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 # export HF_HOME="/path/to/your/huggingface_cache" 
 
+# 强制GPU绑定 - 确保每个训练进程使用不同GPU
+echo "=> [GPU绑定] 为此进程强制绑定GPU ${GPU_ID}"
+export CUDA_VISIBLE_DEVICES=${GPU_ID}
+echo "=> [GPU绑定] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" 
+
 # --- 7. 显示实验配置信息 ---
 echo "=================================================================="
 echo "   启动 AMC-LLM 剪枝搜索 - OPT-1.3B 实验 #${EXP_ID}"

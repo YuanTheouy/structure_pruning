@@ -125,24 +125,12 @@ class ChannelPruningEnv:
         self.model_path = args.model
         self._get_model()
 
-        # 智能设备分配 - 自动适应单GPU/多GPU环境
-        # 优先使用模型实际所在的设备，支持多GPU并行
+        # 简单设备分配 - 遵循CUDA_VISIBLE_DEVICES设置
         if torch.cuda.is_available():
-            gpu_count = torch.cuda.device_count()
-            print(f"=> Detected {gpu_count} GPU(s) available")
-            
             # 获取模型实际所在的设备
             model_device = next(self.model.parameters()).device
             self.device = model_device
-            print(f"=> Model automatically assigned to device: {self.device}")
-            
-            # 如果是多GPU环境，显示设备映射信息
-            if hasattr(self.model, 'hf_device_map') and self.model.hf_device_map:
-                print("=> Multi-GPU device mapping detected:")
-                for module, device in self.model.hf_device_map.items():
-                    if isinstance(device, (int, str)) and str(device).startswith(('cuda', 'cpu')):
-                        print(f"   {module}: {device}")
-            
+            print(f"=> Model device: {self.device}")
         else:
             self.device = torch.device("cpu")
             print(f"=> Using CPU device (CUDA not available)")
@@ -238,28 +226,17 @@ class ChannelPruningEnv:
 
 
     def _get_model_local(self):
-        # 智能设备映射 - 支持多GPU自动分配
-        gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        
-        if gpu_count == 0:
+        # 简单的设备映射 - 严格遵循CUDA_VISIBLE_DEVICES设置
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            print(f"=> Detected {gpu_count} visible GPU(s)")
+            
+            # 简单策略：使用auto让transformers处理，但不覆盖用户的GPU绑定
+            device_map = "auto"
+            print(f"=> Using automatic device mapping with {gpu_count} visible GPU(s)")
+        else:
             device_map = "cpu"
             print("=> Using CPU (no GPU available)")
-        elif gpu_count == 1:
-            device_map = "auto"  # 单GPU使用auto即可
-            print("=> Single GPU environment - using automatic mapping")
-        else:
-            # 多GPU环境 - 让transformers自动分配
-            device_map = "auto"
-            print(f"=> Multi-GPU environment ({gpu_count} GPUs) - using balanced automatic mapping")
-            
-        # 如果用户指定了GPU ID，我们仍然支持，但会警告这不是推荐做法
-        if hasattr(self.args, 'gpu_id') and self.args.gpu_id is not None and torch.cuda.is_available():
-            if self.args.gpu_id < gpu_count:
-                print(f"=> WARNING: GPU ID specified ({self.args.gpu_id}), but auto-mapping is recommended for better performance")
-                print(f"=> Proceeding with automatic mapping for optimal memory utilization")
-            else:
-                print(f"=> WARNING: Specified GPU {self.args.gpu_id} not available (only {gpu_count} GPUs detected)")
-                print(f"=> Using automatic mapping instead")
             
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
@@ -267,8 +244,6 @@ class ChannelPruningEnv:
             cache_dir=self.args.cache_dir,
             low_cpu_mem_usage=True,
             device_map=device_map,
-            max_memory=None,  # 让transformers自动决定
-            offload_folder=None,  # 不使用磁盘offload除非必要
         )
         self.model.seqlen = 2048
 
@@ -517,6 +492,9 @@ class ChannelPruningEnv:
 
             mask = torch.zeros_like(head_metric, dtype=bool)
             mask[preserve_idx] = True
+            
+            # 确保mask在与target_layer相同的设备上
+            mask = mask.to(target_layer.weight.device)
 
             if self.recon:
                 torch.cuda.empty_cache()
@@ -563,6 +541,8 @@ class ChannelPruningEnv:
                 if self.recon:
                     mask_proj = mask.unsqueeze(0)
                     mask_proj = mask_proj.repeat(self.attention_head_size, 1).t().reshape(-1)
+                    # 确保mask_proj在正确的设备上
+                    mask_proj = mask_proj.to(attn.out_proj.weight.device)
                     proj_idx = mask_proj.nonzero().squeeze()
                     scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
                     scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
@@ -608,6 +588,8 @@ class ChannelPruningEnv:
                     torch.cuda.empty_cache()
                     mask_proj = mask.unsqueeze(0)
                     mask_proj = mask_proj.repeat(self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), 1).t().reshape(-1)
+                    # 确保mask_proj在正确的设备上
+                    mask_proj = mask_proj.to(attn.o_proj.weight.device)
                     proj_idx = mask_proj.nonzero().squeeze()
                     scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
                     scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
@@ -644,8 +626,11 @@ class ChannelPruningEnv:
             preserve_idx = sorted_idx.indices[:d_prime]  # to preserve index
             preserve_idx,_ = torch.sort(preserve_idx)
 
-            mask = torch.zeros_like(hidden_metric, dtype=bool, device='cuda')
+            mask = torch.zeros_like(hidden_metric, dtype=bool)
             mask[preserve_idx] = True
+            
+            # 确保mask在与target_layer相同的设备上
+            mask = mask.to(target_layer.weight.device)
 
             if self.recon:
                 torch.cuda.empty_cache()
