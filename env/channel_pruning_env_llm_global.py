@@ -175,8 +175,8 @@ class ChannelPruningEnv:
 
         # 根据状态模式设置状态维度
         if self.use_new_input:
-            # 特征提取状态模式：每个模块8维特征
-            self.state_dim = len(self.prunable_module_names) * 8 if hasattr(self, 'prunable_module_names') else 48 * 8  # 默认48个模块
+            # 特征提取状态模式：所有模块特征拼接 (48个模块 × 8维特征 = 384维)
+            self.state_dim = 48 * 8  # 48个模块，每个8维特征
         else:
             # 全局剪枝率状态模式：1维
             self.state_dim = 1
@@ -217,8 +217,8 @@ class ChannelPruningEnv:
         
         # 根据状态模式设置状态维度
         if self.use_new_input:
-            # 特征提取状态模式：每个模块8维特征
-            self.state_dim = len(self.prunable_module_names) * 8 if hasattr(self, 'prunable_module_names') else 48 * 8
+            # 特征提取状态模式：所有模块特征拼接 (48个模块 × 8维特征 = 384维)
+            self.state_dim = 48 * 8
         else:
             # 全局剪枝率状态模式：1维
             self.state_dim = 1
@@ -353,14 +353,12 @@ class ChannelPruningEnv:
         
         # 在剪枝完成后，安全地获取观察值
         if self.use_new_input:
-            # 剪枝完成后，返回最后一个有效的状态
-            # 计算当前应该处理的模块索引，但要确保不超出范围
+            # 剪枝完成后，返回所有模块的特征向量拼接作为终止状态
             if hasattr(self, 'state') and len(self.state) > 0:
-                # 返回最后一个模块的状态作为终止状态
-                obs = self.state[-1]  # 使用最后一个模块的特征向量
+                obs = self.state.flatten().astype(np.float32)
             else:
-                # 如果没有状态信息，创建一个8维的零向量
-                obs = np.zeros(8, dtype=np.float32)
+                # 如果没有状态信息，创建一个48*8=384维的零向量
+                obs = np.zeros(48 * 8, dtype=np.float32)
         else:
             obs = np.array(self.preserve_ratio, dtype=np.float32)
 
@@ -728,8 +726,8 @@ class ChannelPruningEnv:
 
         # 根据是否使用新输入特征返回相应的观察
         if self.use_new_input and hasattr(self, 'state'):
-            # 返回第一个模块的特征向量（layer 0, head attention）
-            obs = self.state[self.layer_idx * 2 + int(not self.head)]
+            # 返回所有模块的特征向量拼接 (48个模块 × 8维特征 = 384维)
+            obs = self.state.flatten().astype(np.float32)
         else:
             obs = np.array(self.preserve_ratio, dtype=np.float32)
         
@@ -1263,6 +1261,6 @@ class ChannelPruningEnv:
         print(f"=> Each module has {self.state.shape[1]} features")
         
         # 设置状态维度属性，供智能体使用
-        self.state_dim = self.state.shape[1]  # 特征向量的维度
+        self.state_dim = self.state.size  # 所有特征拼接后的总维度 (48*8=384)
         print(f"=> Environment state_dim set to: {self.state_dim}")
 
