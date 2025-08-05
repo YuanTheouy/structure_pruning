@@ -1242,4 +1242,8 @@ class ChannelPruningEnv:
         self.state = self.static_state_tensor.cpu().numpy()
         print(f"=> Environment state set with shape: {self.state.shape}")
         print(f"=> Each module has {self.state.shape[1]} features")
+        
+        # 设置状态维度属性，供智能体使用
+        self.state_dim = self.state.shape[1]  # 特征向量的维度
+        print(f"=> Environment state_dim set to: {self.state_dim}")
 

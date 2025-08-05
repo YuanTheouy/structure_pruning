@@ -19,7 +19,7 @@ GPU_ID=0           # 默认使用GPU 0
 EXP_ID=0           # 默认实验配置ID
 PRESERVE_RATIO=0.7 # 默认保留比例
 TRAIN_EPISODES=3000 # 默认训练轮数
-ENABLE_DOWNSTREAM=true # 默认开启下游任务评估
+ENABLE_DOWNSTREAM=false # 默认关闭下游任务评估
 SHOW_HELP=false
 
 while [[ $# -gt 0 ]]; do

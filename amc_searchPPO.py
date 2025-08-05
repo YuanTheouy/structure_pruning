@@ -255,15 +255,26 @@ def export_model(env, args):
 
     return
 
-def get_agent(nb_states, nb_actions):
-
-    net1 = MLP([args.hidden1, args.hidden1], nn.ReLU, nb_states, nb_actions)
+def get_agent(nb_states, nb_actions, args):
+    """
+    根据状态和动作维度，构建并返回一个PPO智能体。
+    网络结构已增强，以适应高维状态输入。
+    """
+    # 推荐：为高维状态使用更深的网络结构
+    actor_hidden_layers = [args.hidden1, args.hidden1, args.hidden1 // 2]  # 例如 [256, 256, 128]
+    critic_hidden_layers = [args.hidden2, args.hidden2, args.hidden2 // 2] # 例如 [256, 256, 128]
+    
+    print(f"Building Actor network with input_dim={nb_states}, hidden_layers={actor_hidden_layers}")
+    net1 = MLP(actor_hidden_layers, nn.ReLU, nb_states, nb_actions)
     # net1 = RMlp('lstm', 1, 256, [args.hidden1, args.hidden2], nn.ReLU, nb_states, nb_actions)
     explorer = Gaussian(nb_actions, 1.0)
     actor = Actor(net1, explorer)
-    net2 = MLP([args.hidden2, args.hidden2], nn.ReLU, nb_states, 1)
+    
+    print(f"Building Critic network with input_dim={nb_states}, hidden_layers={critic_hidden_layers}")
+    net2 = MLP(critic_hidden_layers, nn.ReLU, nb_states, 1)
     # net2 = RMlp('lstm', 1, 256, [args.hidden1, args.hidden2], nn.ReLU, nb_states, 1)
     critic = Critic(net2)
+    
     ppo = PPO(actor, critic, 1, args.num_collect, args.learning_epoch, 1,
               clip_param=args.clip_param,
               entropy_coef=args.entropy_coef,
@@ -272,6 +283,7 @@ def get_agent(nb_states, nb_actions):
               lamda=args.lamda,
               learning_rate=args.lr_a,
               max_grad_norm=args.max_grad_norm)
+              
     return ppo
 
 
@@ -372,17 +384,20 @@ if __name__ == "__main__":
         text_writer = open(os.path.join(args.output, 'log.txt'), 'w')
         print('=> Output path: {}...'.format(args.output))
 
-        if args.use_new_input:
-            nb_states = 8  # FeatureExtractor generates 8 features per module
-        else:
-            nb_states = 1
-        
+        # 1. 从环境中动态获取正确的状态维度
+        nb_states = env.state_dim
+        print(f"=> Correct state dimension from environment: {nb_states}")
+
+        # 2. 获取动作维度 (逻辑不变)
         if args.structure:
             nb_actions = env.num_hidden_layers * 2  # head and ffn
         else:
             nb_actions = env.num_hidden_layers * 7  # k, v, q, out_proj, fc1 , fc2
 
-        agent = get_agent(nb_states, nb_actions)
+        print(f"=> Action dimension: {nb_actions}")
+
+        # 3. 将正确的参数传递给 agent，并额外传入 args
+        agent = get_agent(nb_states, nb_actions, args)
         if args.agent_path is not None:
             sd = torch.load(args.agent_path)
             agent.load_state_dict(sd)
