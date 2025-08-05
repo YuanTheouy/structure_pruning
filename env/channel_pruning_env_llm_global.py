@@ -173,6 +173,15 @@ class ChannelPruningEnv:
         self.export_model = export_model
         self.use_new_input = use_new_input
 
+        # 根据状态模式设置状态维度
+        if self.use_new_input:
+            # 特征提取状态模式：每个模块8维特征
+            self.state_dim = len(self.prunable_module_names) * 8 if hasattr(self, 'prunable_module_names') else 48 * 8  # 默认48个模块
+        else:
+            # 全局剪枝率状态模式：1维
+            self.state_dim = 1
+        
+        print(f"=> Environment state dimension: {self.state_dim} (use_new_input: {self.use_new_input})")
 
         # prepare data
         self._init_data()
@@ -205,6 +214,16 @@ class ChannelPruningEnv:
         self.best_reward = -math.inf
         self.best_strategy = None
         self.best_d_prime_list = None
+        
+        # 根据状态模式设置状态维度
+        if self.use_new_input:
+            # 特征提取状态模式：每个模块8维特征
+            self.state_dim = len(self.prunable_module_names) * 8 if hasattr(self, 'prunable_module_names') else 48 * 8
+        else:
+            # 全局剪枝率状态模式：1维
+            self.state_dim = 1
+            
+        print(f'=> 状态维度设置为: {self.state_dim} (use_new_input={self.use_new_input})')
 
 
 

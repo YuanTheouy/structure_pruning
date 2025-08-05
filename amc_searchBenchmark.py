@@ -107,6 +107,8 @@ def parse_args():
     parser.add_argument('--export_path', default=None, type=str, help='path for exporting models')
     parser.add_argument('--agent_path', default=None, type=str, help='path for off-line loading agent')
     parser.add_argument('--use_new_input', dest='use_new_input', action='store_true', help='use new input feature')
+    parser.add_argument('--state_mode', default=1, type=int, choices=[0, 1], 
+                        help='Agent state mode: 0=global pruning ratio, 1=feature extraction state')
 
     return parser.parse_args()
 
@@ -302,6 +304,15 @@ if __name__ == "__main__":
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed(args.seed)
+    
+    # === 根据 state_mode 参数决定是否使用新输入特征 ===
+    # 在创建环境之前设置，确保环境创建时使用正确的参数
+    if args.state_mode == 1:
+        args.use_new_input = True
+        print("=> State Mode 1: 启用特征提取状态")
+    else:
+        args.use_new_input = False
+        print("=> State Mode 0: 使用全局剪枝率状态")
     
     if args.job == 'test':
         test_model(args)
