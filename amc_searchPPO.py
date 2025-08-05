@@ -351,17 +351,19 @@ if __name__ == "__main__":
             
             prunable_modules = env.prunable_module_names
             
-            # 2. 创建并运行 FeatureExtractor（极致内存优化）
+            # 2. 创建并运行 FeatureExtractor（分批内存优化）
             print("=> Initializing FeatureExtractor...")
-            # 极大减少样本数以避免显存不足
-            max_samples_for_features = min(8, args.n_samples // 8)  # 使用1/8的样本或最多8个
-            print(f"=> 极致内存优化：使用 {max_samples_for_features} 个样本进行特征提取")
+            # 
+            max_samples_for_features = min(64, args.n_samples)  # 
+            print(f"=> 超级内存保守模式：使用 {max_samples_for_features} 个样本进行特征提取")
+            print(f"=> 说明：分层处理 + 逐样本推理 + 极限内存清理")
             
             feature_extractor = FeatureExtractor(
                 model=env.model,
                 dataloader=train_loader,  # 使用训练集进行特征提取
                 prunable_module_names=prunable_modules,
-                max_samples=max_samples_for_features
+                max_samples=max_samples_for_features,
+                cache_dir=os.path.join(args.output, "feature_cache")  # 使用输出目录下的缓存文件夹
             )
             
             print("=> Extracting features...")
