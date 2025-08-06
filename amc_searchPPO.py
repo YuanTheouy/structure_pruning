@@ -13,7 +13,7 @@ torch.backends.cudnn.deterministic = True
 
 from env.channel_pruning_env_llm_global import ChannelPruningEnv
 from env.weight_pruning_env_llm_global import WeightPruningEnv
-from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian
+from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian, GumbelActor
 from lib.utils import get_output_folder
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument('--preserve_ratio', default=0.5, type=float, help='preserve ratio of the model')
     parser.add_argument('--lbound', default=0.2, type=float, help='minimum preserve ratio')
     parser.add_argument('--rbound', default=1., type=float, help='maximum preserve ratio')
-    parser.add_argument('--reward', default='acc_reward', type=str, help='Setting the reward')
+    parser.add_argument('--reward', default='reward_ppl', type=str, help='Setting the reward')
     parser.add_argument('--acc_metric', default='acc5', type=str, help='use acc1 or acc5')
     parser.add_argument('--use_real_val', dest='use_real_val', action='store_true')
     parser.add_argument('--ckpt_path', default=None, type=str, help='manual path of checkpoint')
@@ -130,6 +130,20 @@ def parse_args():
     parser.add_argument('--metric', default='input', type=str, help='input or wanda')
     parser.add_argument('--feat', default='mean', type=str, help='mean or flat')
 
+    # >>> ADD THE FOLLOWING CODE BLOCK
+    # Gumbel-Softmax specific parameters
+    parser.add_argument('--use_gumbel_softmax', action='store_true', 
+                        help='Use Gumbel-Softmax for action selection.')
+    parser.add_argument('--num_action_bins', default=4, type=int, 
+                        help='Number of discrete action bins for each module.')
+    parser.add_argument('--gumbel_tau_initial', default=2.0, type=float, 
+                        help='Initial temperature for Gumbel-Softmax.')
+    parser.add_argument('--gumbel_tau_final', default=0.2, type=float, 
+                        help='Final temperature for Gumbel-Softmax.')
+    parser.add_argument('--gumbel_anneal_episodes', default=500, type=int, 
+                        help='Number of episodes to anneal Gumbel temperature.')
+    # >>> END OF CODE BLOCK
+
     return parser.parse_args()
 
 
@@ -147,12 +161,33 @@ def get_llm(model, cache_dir="llm_weights"):
 
 
 def train(num_episode, agent, env, output):
+    global tfwriter, text_writer
     step = episode = episode_steps = 0
     episode_reward = 0.
     observation = None
     summary=None
 
+    # Setup Gumbel-Softmax temperature annealing schedule if enabled
+    if args.use_gumbel_softmax:
+        tau_schedule = np.linspace(args.gumbel_tau_initial, args.gumbel_tau_final, args.gumbel_anneal_episodes)
+        print(f"Gumbel temperature annealing enabled: from {args.gumbel_tau_initial} to {args.gumbel_tau_final} over {args.gumbel_anneal_episodes} episodes.")
+
     while episode < num_episode:  # counting based on episode
+        
+        # Update Gumbel temperature at the start of each episode
+        if args.use_gumbel_softmax:
+            if episode < args.gumbel_anneal_episodes:
+                current_tau = tau_schedule[episode]
+            else:
+                current_tau = args.gumbel_tau_final
+            
+            # Set the new temperature in the actor
+            agent.actor.set_tau(current_tau)
+            
+            # Log the temperature periodically
+            if episode % 20 == 0: # Log every 20 episodes
+                tfwriter.add_scalar('hparams/gumbel_tau', current_tau, episode)
+
         for i in range(agent.num_collects):
             # reset if it is the start of episode
             with torch.inference_mode():
@@ -181,7 +216,8 @@ def train(num_episode, agent, env, output):
                         next_observation = np.expand_dims(next_observation, 0)
 
                 # [optional] save intermideate model
-                if episode % int(num_episode / 100) == 0:
+                save_interval = max(1, int(num_episode / 100))  # Avoid division by zero
+                if episode % save_interval == 0:
                     agent.save_model(output)
 
                 # update
@@ -241,6 +277,56 @@ def export_model(env, args):
     assert args.export_path is not None, 'Please provide a valid export path'
     env.set_export_path(args.export_path)
 
+    # === 为 export 模式设置静态状态 (如果使用新输入特征) ===
+    if args.use_new_input:
+        print("=> Export mode: Setting up feature-based state...")
+        
+        # 获取特征配置
+        from feature_configs import get_config_by_name
+        from feature_extractor import FeatureOrchestrator
+        from lib.data import get_loaders
+        import torch
+        import os
+        
+        master_config = get_config_by_name('comprehensive') 
+        exp_config = get_config_by_name(args.feature_config)
+        print(f"=> Using feature configuration: '{args.feature_config}'")
+
+        # 准备数据加载器和模块列表
+        train_loader, _ = get_loaders(
+            name=args.dataset_name, nsamples=args.n_samples,
+            seed=args.seed, seqlen=env.model.seqlen, tokenizer=env.tokenizer
+        )
+        prunable_modules = env.prunable_module_names
+
+        # 计算/加载特征张量
+        print("=> Initializing orchestrator for export mode...")
+        orchestrator = FeatureOrchestrator(
+            model=env.model, dataloader=train_loader,
+            prunable_module_names=prunable_modules,
+            feature_config=master_config,
+            max_samples=min(64, args.n_samples),
+            cache_dir="./feature_cache"  # 使用默认缓存目录
+        )
+        master_features_tensor = orchestrator.extract()
+
+        # 根据实验配置筛选特征
+        all_feature_names = [f.name for f in orchestrator.active_module_features]
+        selected_indices = [
+            i for i, name in enumerate(all_feature_names) 
+            if exp_config.get(name, False)
+        ]
+        selected_features_tensor = master_features_tensor[:, selected_indices]
+        
+        # 组装最终的全局状态向量
+        state_features_flat = selected_features_tensor.flatten()
+        preserve_ratio_tensor = torch.tensor([env.preserve_ratio], dtype=torch.float32)
+        final_state_vector = torch.cat((state_features_flat, preserve_ratio_tensor))
+        
+        # 设置静态状态到环境中
+        env.set_static_state(final_state_vector.numpy())
+        print("=> Feature-based state setup complete for export mode.")
+
     print('=> Original model channels: {}'.format(env.dim_list))
     if args.ratios:
         ratios = args.ratios.split(',')
@@ -267,19 +353,35 @@ def get_agent(nb_states, nb_actions, args):
     根据状态和动作维度，构建并返回一个PPO智能体。
     网络结构已增强，以适应高维状态输入。
     """
-    # 推荐：为高维状态使用更深的网络结构
-    actor_hidden_layers = [args.hidden1, args.hidden1, args.hidden1 // 2]  # 例如 [256, 256, 128]
-    critic_hidden_layers = [args.hidden2, args.hidden2, args.hidden2 // 2] # 例如 [256, 256, 128]
+    actor_hidden_layers = [args.hidden1, args.hidden1, args.hidden1 // 2]
+    critic_hidden_layers = [args.hidden2, args.hidden2, args.hidden2 // 2]
     
-    print(f"Building Actor network with input_dim={nb_states}, hidden_layers={actor_hidden_layers}")
-    net1 = MLP(actor_hidden_layers, nn.ReLU, nb_states, nb_actions)
-    # net1 = RMlp('lstm', 1, 256, [args.hidden1, args.hidden2], nn.ReLU, nb_states, nb_actions)
-    explorer = Gaussian(nb_actions, 1.0)
-    actor = Actor(net1, explorer)
+    # >>> START OF MODIFICATION <<<
+    if args.use_gumbel_softmax:
+        # If using Gumbel-Softmax, the Actor's MLP outputs logits for each bin of each action.
+        actor_output_dim = nb_actions * args.num_action_bins
+        print(f"Building Gumbel-Softmax Actor. Input: {nb_states}, Output Logits: {actor_output_dim} ({nb_actions} actions x {args.num_action_bins} bins)")
+    else:
+        # Original logic
+        actor_output_dim = nb_actions
+        print(f"Building standard Gaussian Actor. Input: {nb_states}, Output Actions: {actor_output_dim}")
+
+    net1 = MLP(actor_hidden_layers, nn.ReLU, nb_states, actor_output_dim)
+    
+    if args.use_gumbel_softmax:
+        # Create the action bins tensor. It will be moved to the correct device by the GumbelActor's buffer mechanism.
+        action_bins = torch.linspace(args.lbound, args.rbound, args.num_action_bins, dtype=torch.float32)
+        
+        # Instantiate the real GumbelActor, replacing the placeholder.
+        actor = GumbelActor(net1, nb_actions, args.num_action_bins, action_bins)
+    else:
+        # This is the original logic for backward compatibility.
+        explorer = Gaussian(nb_actions, 1.0)
+        actor = Actor(net1, explorer)
+    # >>> END OF MODIFICATION <<<
     
     print(f"Building Critic network with input_dim={nb_states}, hidden_layers={critic_hidden_layers}")
     net2 = MLP(critic_hidden_layers, nn.ReLU, nb_states, 1)
-    # net2 = RMlp('lstm', 1, 256, [args.hidden1, args.hidden2], nn.ReLU, nb_states, 1)
     critic = Critic(net2)
     
     ppo = PPO(actor, critic, 1, args.num_collect, args.learning_epoch, 1,

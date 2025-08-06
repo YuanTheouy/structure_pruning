@@ -179,8 +179,8 @@ class ChannelPruningEnv:
 
         # build reward
         self.reset()  # restore weight
-        self.org_ppl = 10#self._validate(self.model)
-        print('=> original ppl: {:.3f}%'.format(self.org_ppl))
+        self.org_ppl = self._validate(self.model)  # 计算真实的原始模型PPL
+        print('=> original ppl: {:.3f}'.format(self.org_ppl))
         self.org_para = sum(self.param_list)
         print('=> Params:')
         print(self.param_list)
@@ -245,13 +245,22 @@ class ChannelPruningEnv:
             low_cpu_mem_usage=True,
             device_map=device_map,
         )
-        self.model.seqlen = 2048
-
-        # 根据模型类型选择正确的layers访问路径
+        
+        # 根据模型类型动态设置序列长度
         if "OPT" in self.model.__class__.__name__:
+            # OPT模型使用2048序列长度
+            self.model.seqlen = 2048
             layers = self.model.model.decoder.layers
         else:
+            # Llama等其他模型使用配置中的max_position_embeddings，但限制在合理范围内
+            max_seq_len = getattr(self.model.config, 'max_position_embeddings', 2048)
+            # 为了避免内存问题，我们将序列长度限制在2048
+            self.model.seqlen = min(max_seq_len, 2048)
             layers = self.model.model.layers
+            
+        print(f"=> Model type: {self.model.__class__.__name__}")
+        print(f"=> Sequence length set to: {self.model.seqlen}")
+        print(f"=> Model max_position_embeddings: {getattr(self.model.config, 'max_position_embeddings', 'N/A')}")
         print(layers)
 
 
@@ -661,7 +670,7 @@ class ChannelPruningEnv:
                 for i, Cin in enumerate(weight):
                     Out = Cin.reshape(Cin.shape[0], -1).float().to(self.device)
                     Out = torch.mm(scale_map, Out).reshape(-1)
-                    target_layer.weight.data[i, :] = Out.to(target_layer.weight)
+                    target_layer.weight.data[i, :] = Out.to(target_layer.weight.device)
             else:
                 target_layer.weight.data = target_layer.weight.data[:, mask]
 
@@ -789,7 +798,7 @@ class ChannelPruningEnv:
 
 
     def _init_data(self):
-        self.dataloader, _ = get_loaders(self.dataset, nsamples=self.n_samples, seed=self.args.seed, seqlen=2048, tokenizer=self.tokenizer)
+        self.dataloader, _ = get_loaders(self.dataset, nsamples=self.n_samples, seed=self.args.seed, seqlen=self.model.seqlen, tokenizer=self.tokenizer)
         # self.dataloader, _ = get_loaders(self.dataset, nsamples=self.n_samples, seed=self.args.seed, seqlen=2048, tokenizer=self.tokenizer)
 
     def prepare_calibration_input_opt(self):
@@ -839,6 +848,30 @@ class ChannelPruningEnv:
         self.model.config.use_cache = use_cache
 
         position_ids = None
+        
+        # 确保attention_mask与序列长度匹配
+        if attention_mask is not None and attention_mask.shape[-1] != self.model.seqlen:
+            print(f"=> Adjusting attention_mask from {attention_mask.shape} to match seqlen {self.model.seqlen}")
+            # 重新生成正确尺寸的attention_mask
+            batch_size = attention_mask.shape[0]
+            # 对于OPT模型，我们通常只需要简单的padding mask
+            new_attention_mask = torch.ones((batch_size, self.model.seqlen), 
+                                          device=attention_mask.device, dtype=attention_mask.dtype)
+            attention_mask = new_attention_mask
+            print(f"=> Generated new attention_mask with shape: {attention_mask.shape}")
+        
+        # 对于Llama等需要position_ids的模型，确保位置一致性
+        if hasattr(cache, 'position_ids') and cache.get('position_ids') is not None:
+            position_ids = cache['position_ids']
+            if position_ids.shape[-1] != self.model.seqlen:
+                print(f"=> Adjusting position_ids from {position_ids.shape} to match seqlen {self.model.seqlen}")
+                if position_ids.shape[-1] > self.model.seqlen:
+                    position_ids = position_ids[:, :self.model.seqlen]
+                else:
+                    batch_size = position_ids.shape[0]
+                    extended_positions = torch.arange(position_ids.shape[-1], self.model.seqlen, device=position_ids.device)
+                    extended_positions = extended_positions.unsqueeze(0).expand(batch_size, -1)
+                    position_ids = torch.cat([position_ids, extended_positions], dim=1)
 
         return inps, outs, attention_mask, position_ids
 
@@ -885,6 +918,30 @@ class ChannelPruningEnv:
         outs = torch.zeros_like(inps)
         attention_mask = cache['attention_mask']
         position_ids = cache['position_ids']
+        
+        # 为Llama等模型重新生成正确长度的position_ids和attention_mask
+        if position_ids is not None:
+            batch_size = position_ids.shape[0]
+            # 生成与序列长度匹配的position_ids
+            position_ids = torch.arange(self.model.seqlen, device=position_ids.device).unsqueeze(0).expand(batch_size, -1)
+            print(f"=> Generated position_ids with shape: {position_ids.shape} for seqlen: {self.model.seqlen}")
+        
+        # 确保attention_mask与序列长度匹配
+        if attention_mask is not None and attention_mask.shape[-1] != self.model.seqlen:
+            print(f"=> Adjusting attention_mask from {attention_mask.shape} to match seqlen {self.model.seqlen}")
+            # 重新生成正确尺寸的attention_mask
+            batch_size = attention_mask.shape[0]
+            # 创建新的attention_mask，形状为[batch_size, 1, seq_len, seq_len]
+            new_attention_mask = torch.ones((batch_size, 1, self.model.seqlen, self.model.seqlen), 
+                                          device=attention_mask.device, dtype=attention_mask.dtype)
+            # 设置为下三角矩阵（causal mask）
+            new_attention_mask = torch.tril(new_attention_mask)
+            # 转换为注意力分数的mask（0表示可以attention，-inf表示不能）
+            new_attention_mask = new_attention_mask.masked_fill(new_attention_mask == 0, float('-inf'))
+            new_attention_mask = new_attention_mask.masked_fill(new_attention_mask == 1, 0.0)
+            attention_mask = new_attention_mask
+            print(f"=> Generated new attention_mask with shape: {attention_mask.shape}")
+        
         self.model.config.use_cache = use_cache
 
         return inps, outs, attention_mask, position_ids
@@ -1003,8 +1060,7 @@ class ChannelPruningEnv:
                     if "OPT" in self.model.__class__.__name__:
                         self.outs[j] = layer(self.inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
                     else:
-                        self.outs[j] = layer(self.inps[j].unsqueeze(0), attention_mask=self.attention_mask, position_ids=self.position_ids)[
-                            0]
+                        self.outs[j] = layer(self.inps[j].unsqueeze(0), attention_mask=self.attention_mask, position_ids=self.position_ids)[0]
 
             for h in handles:
                 h.remove()
