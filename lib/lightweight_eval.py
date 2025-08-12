@@ -449,7 +449,7 @@ class LightweightEvaluator:
         # 评估任务列表及其样本数量
         tasks = [
             ("BoolQ", self.evaluate_boolq, num_samples_per_task),
-            ("PIQA", self.evaluate_piqa, num_samples_per_task),
+            # ("PIQA", self.evaluate_piqa, num_samples_per_task),
             ("HellaSwag", self.evaluate_hellaswag, num_samples_per_task),
             ("WinoGrande", self.evaluate_winogrande, max(1, num_samples_per_task // 2)),
             ("ARC-Easy", self.evaluate_arc_easy, num_samples_per_task),

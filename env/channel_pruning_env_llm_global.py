@@ -11,7 +11,7 @@ from lib.data_utils import DataSaverHook, StopForwardException
 from lib.data import get_loaders
 from lib.Ridge import Ridge_Regression
 from copy import deepcopy
-
+import json
 
 
 from accelerate import dispatch_model, infer_auto_device_map
@@ -41,45 +41,107 @@ def _check_transformers_compatibility():
     except:
         return False
 
+# file: env/channel_pruning_env_llm_global.py
+
+# file: env/channel_pruning_env_llm_global.py
+
 def _load_lmeval():
-    """智能加载评估框架 - 优先使用lm-eval-harness，回退到轻量级实现"""
+    """
+    智能加载评估框架 (终极离线修复版)
+    通过猴子补丁(Monkey-Patching)劫持 evaluate.load 函数，强制其在离线环境中使用本地缓存。
+    """
     global LMEVAL_AVAILABLE, LIGHTWEIGHT_EVAL_AVAILABLE, lm_eval, evaluator, HFLM, LightweightEvaluator
-    
-    # 首先尝试加载完整的lm-eval-harness
+
+    if LMEVAL_AVAILABLE: return "full"
+    if LIGHTWEIGHT_EVAL_AVAILABLE: return "lightweight"
+
     try:
-        import lm_eval as _lm_eval
-        from lm_eval import evaluator as _evaluator
-        from lm_eval.models.huggingface import HFLM as _HFLM
+        import evaluate as hf_evaluate
+        import os
+        import sys
         
-        lm_eval = _lm_eval
-        evaluator = _evaluator
-        HFLM = _HFLM
-        LMEVAL_AVAILABLE = True
-        print("=> Using full lm-eval-harness framework")
-        return "full"
-    # except ImportError:
-    #     # 静默处理ImportError，直接尝试轻量级实现
-    #     pass
-    except Exception:
-        # 静默处理其他兼容性问题
-        # pass
-        import traceback
-        print("\n" + "="*60)
-        print("=> [DEBUG] 'lm-eval-harness' import failed. Printing full traceback:")
-        traceback.print_exc()
-        print("="*60 + "\n")
-        # 保持pass，让程序继续回退到轻量级实现，避免程序崩溃
+        print("\n" + "="*70)
+        print("🔬 ENTERING OFFLINE-FIRST EVALUATION LOADER (MONKEY-PATCH MODE)")
+        print(f"Python executable: {sys.executable}")
+        print("="*70)
+
+        # --- 步骤 1: 预加载所有我们需要的度量到私有字典中 ---
+        print("\n--- [STEP 1] Pre-loading metrics into a local dictionary...")
+        HF_CACHE_HOME = os.path.expanduser(os.path.join('~', '.cache', 'huggingface'))
+        metrics_to_preload = ["exact_match", "rouge", "bleu", "sacrebleu"]
+        preloaded_metrics = {}
+
+        for metric_name in metrics_to_preload:
+            metric_path = os.path.join(HF_CACHE_HOME, 'evaluate', 'metrics', metric_name)
+            if os.path.exists(metric_path):
+                print(f"   -> Loading '{metric_name}' from: {metric_path}")
+                preloaded_metrics[metric_name] = hf_evaluate.load(metric_path, trust_remote_code=True)
+            else:
+                raise FileNotFoundError(f"Required local cache for '{metric_name}' not found at {metric_path}")
+        
+        print("✅ [SUCCESS] All metrics loaded into local dictionary.")
+
+        # --- 步骤 2: 准备猴子补丁 ---
+        print("\n--- [STEP 2] Preparing to monkey-patch 'evaluate.load'...")
+        original_evaluate_load = hf_evaluate.load  # 保存原始函数
+        
+        def custom_load(path, *args, **kwargs):
+            """我们的自定义加载函数"""
+            print(f"   🐵 INTERCEPTED call to evaluate.load(path='{path}')")
+            # 如果是短名称调用，从我们的字典返回
+            if path in preloaded_metrics:
+                print(f"   ✅ Returning pre-loaded module for '{path}' from our dictionary.")
+                return preloaded_metrics[path]
+            
+            # 否则，调用原始函数 (以防万一)
+            print(f"   -> Path '{path}' not in our dictionary, falling back to original load function.")
+            return original_evaluate_load(path, *args, **kwargs)
+
+        # --- 步骤 3: 应用补丁并尝试导入 lm-eval ---
+        hf_evaluate.load = custom_load # 应用猴子补丁
+        print("✅ [SUCCESS] 'evaluate.load' has been temporarily replaced.")
+        
+        print("\n--- [STEP 3] Attempting to import 'lm-eval-harness' with the patch active...")
+        try:
+            import lm_eval as _lm_eval
+            from lm_eval import evaluator as _evaluator
+            from lm_eval.models.huggingface import HFLM as _HFLM
+            
+            lm_eval = _lm_eval
+            evaluator = _evaluator
+            HFLM = _HFLM
+            LMEVAL_AVAILABLE = True
+            print("\n🎉🎉🎉 [SUCCESS] 'lm-eval-harness' imported successfully under offline patch! 🎉🎉🎉")
+            
+            # 恢复原始函数
+            hf_evaluate.load = original_evaluate_load
+            print("✅ 'evaluate.load' has been restored to its original state.")
+            return "full"
+
+        except Exception as e:
+            # 如果即使在打了补丁后仍然失败，打印错误
+            import traceback
+            print("\n🔥🔥🔥 [FAILURE] 'lm-eval-harness' import failed EVEN WITH a patch.")
+            traceback.print_exc()
+            raise e
+
+    except Exception as final_exception:
+        # 如果整个过程有任何问题，则回退到轻量级实现
+        print(f"\n🔥🔥🔥 [CRITICAL FAILURE] Offline loader failed: {final_exception}")
+        LMEVAL_AVAILABLE = False # 确保状态正确
+
+    # 最终的回退逻辑
+    if not LMEVAL_AVAILABLE:
+        try:
+            print("\n--- [FALLBACK] Reverting to lightweight evaluation implementation.")
+            from lib.lightweight_eval import LightweightEvaluator as _LightweightEvaluator
+            LightweightEvaluator = _LightweightEvaluator
+            LIGHTWEIGHT_EVAL_AVAILABLE = True
+            return "lightweight"
+        except ImportError:
+            print("=> Critical: No evaluation framework available at all.")
+            return "none"
     
-    # 回退到轻量级评估实现
-    try:
-        from lib.lightweight_eval import LightweightEvaluator as _LightweightEvaluator
-        LightweightEvaluator = _LightweightEvaluator
-        LIGHTWEIGHT_EVAL_AVAILABLE = True
-        print("=> Using lightweight evaluation implementation")
-        return "lightweight"
-    except ImportError:
-        print("=> Continuing without downstream task evaluation")
-        return "none"
 from sklearn.metrics import pairwise_distances
 from lib.linalg import lsmr_cupy_solver
 from lib.mac import mac_per_head, mac_per_neuron, get_layer_param, get_norm_param
@@ -1339,19 +1401,28 @@ class ChannelPruningEnv:
                 return False
 
     def _evaluate_with_lmeval(self, model):
-        """使用完整的lm-eval-harness进行评估"""
+        """使用完整的lm-eval-harness进行评估 (增加调试功能)"""
         try:
             # 使用新版lm-eval-harness API
             model_wrapper = HFLM(
                 pretrained=model,
                 tokenizer=self.tokenizer,
                 batch_size=4,
-                device=self.device
+                # device 字段在新版中通常由HFLM自动处理，但为保险起见保留
+                # device=self.device 
             )
             
             # 选择核心下游任务
-            task_names = ["piqa", "hellaswag", "winogrande", "arc_easy"]
-            
+            # task_names = ["hellaswag", "winogrande", "arc_easy"]
+            # 任务名称与论文表格的对应关系：
+            # BoolQ -> boolq
+            # PIQA -> piqa  
+            # HellaSwag -> hellaswag
+            # WinoGrande -> winogrande
+            # ARC-e -> arc_easy
+            # ARC-c -> arc_challenge
+            # OBQA -> openbookqa
+            task_names = ["boolq", "piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
             print(f"=> Evaluating on {len(task_names)} downstream tasks: {task_names}")
             
             # 使用新版API进行评估
@@ -1359,41 +1430,53 @@ class ChannelPruningEnv:
                 model=model_wrapper,
                 tasks=task_names,
                 num_fewshot=0,
-                limit=100,  # 限制每个任务的样本数量
-                bootstrap_iters=100,  # 减少bootstrap迭代次数
-                no_cache=True,
+                limit=100,
+                bootstrap_iters=100,
+                # no_cache=True, # 在离线模式下，最好不要禁用缓存
                 verbosity="INFO"
             )
             
-            # 显示结果
+            # # --- 核心调试步骤：打印原始结果 ---
+            # print("\n" + "="*70)
+            # print("🔍 DEBUG: Raw results from lm-eval-harness:")
+            # print(json.dumps(results, indent=2))
+            # print("="*70 + "\n")
+            # # --- 调试结束 ---
+
             print("=> Downstream Task Results (lm-eval-harness):")
             task_scores = {}
             
             if "results" in results:
                 for task_name, task_result in results["results"].items():
                     if isinstance(task_result, dict):
-                        # 寻找主要指标
-                        main_metrics = ["acc", "acc_norm", "exact_match", "f1"]
+                        # 更稳健地寻找主要指标
+                        main_metrics = ["acc,none", "acc_norm,none", "acc", "acc_norm", "exact_match", "f1"]
+                        found_metric = False
                         for metric in main_metrics:
                             if metric in task_result:
                                 score = task_result[metric]
                                 task_scores[task_name] = score
-                                print(f"   {task_name}: {score:.4f}")
-                                break
-                
+                                print(f"   ✅ {task_name}: {score:.4f} (found metric: '{metric}')")
+                                found_metric = True
+                                break # 找到了就处理下一个任务
+                        if not found_metric:
+                            print(f"   ⚠️ Could not find a main metric for task '{task_name}' in its results.")
+
                 if task_scores:
                     avg_score = sum(task_scores.values()) / len(task_scores)
                     print(f"=> Average downstream task performance: {avg_score:.4f}")
                     return True
                 else:
-                    print("=> WARNING: No valid task scores obtained!")
+                    print("=> WARNING: No valid task scores were extracted from the raw results.")
                     return False
             else:
-                print("=> WARNING: No results returned from evaluation!")
+                print("=> WARNING: The key 'results' was not found in the raw output!")
                 return False
                 
         except Exception as e:
+            import traceback
             print(f"=> lm-eval-harness evaluation failed: {str(e)}")
+            traceback.print_exc()
             raise e
 
     def _evaluate_with_lightweight(self, model):

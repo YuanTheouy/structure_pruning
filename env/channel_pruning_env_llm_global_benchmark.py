@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as f
 from lib.utils import AverageMeter, accuracy, prGreen
-from lib.lm_eval.tasks import get_task_dict
+from lib.lm_eval_local_backup.tasks import get_task_dict
 from lib.arch import get_layers, get_mha_proj, get_ffn2, get_ffn1, get_mha,  get_down, get_up, get_gate
 from lib.layerwrapper import WrappedGPT
 from lib.eval import eval_ppl

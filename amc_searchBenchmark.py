@@ -10,10 +10,10 @@ from torch import nn
 import transformers
 torch.backends.cudnn.deterministic = True
 
-from lib.lm_eval.evaluator import evaluate, make_table
-from lib.lm_eval.tasks import get_task_dict, ALL_TASKS
-from lib.lm_eval.utils import pattern_match
-from lib.lm_eval.models import get_model
+from lib.lm_eval_local_backup.evaluator import evaluate, make_table
+from lib.lm_eval_local_backup.tasks import get_task_dict, ALL_TASKS
+from lib.lm_eval_local_backup.utils import pattern_match
+from lib.lm_eval_local_backup.models import get_model
 from env.channel_pruning_env_llm_global_benchmark import ChannelPruningEnv
 from env.weight_pruning_env_llm_global import WeightPruningEnv
 from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian

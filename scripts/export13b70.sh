@@ -122,8 +122,8 @@ if [ -z "$EXPORT_PATH" ]; then
 fi
 
 # --- 6. 环境变量设置 ---
-export HF_EVALUATE_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# export HF_EVALUATE_OFFLINE=1
+# export TRANSFORMERS_OFFLINE=1
 # Force use of CUDA 12 libraries and exclude all other CUDA library paths
 # export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
 # Remove conda env lib path that might have conflicting CUDA libraries  

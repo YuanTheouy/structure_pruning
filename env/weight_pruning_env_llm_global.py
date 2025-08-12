@@ -7,7 +7,8 @@ from lib.utils import AverageMeter, accuracy, prGreen
 from lib.arch import get_layers, get_mha_proj, get_ffn2, get_ffn1, get_mha, find_layers
 from lib.layerwrapper import WrappedGPT
 from lib.sparsegpt import SparseGPT
-from lib.eval import eval_ppl, eval_acc
+# from lib.eval import eval_ppl, eval_acc
+from lib.eval import eval_ppl
 from lib.data_utils import DataSaverHook, StopForwardException
 from lib.data import get_loaders
 from lib.Ridge import Ridge_Regression
@@ -17,10 +18,10 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaTokenizer, Au
 from env.rewards import *
 import math
 
-from lib.lm_eval.evaluator import evaluate, make_table
-from lib.lm_eval.tasks import get_task_dict, ALL_TASKS
-from lib.lm_eval.utils import pattern_match
-from lib.lm_eval.models import get_model
+# from lib.lm_eval_local_backup.evaluator import evaluate, make_table
+# from lib.lm_eval_local_backup.tasks import get_task_dict, ALL_TASKS
+# from lib.lm_eval_local_backup.utils import pattern_match
+# from lib.lm_eval_local_backup.models import get_model
 
 import numpy as np
 import copy
@@ -385,37 +386,37 @@ class WeightPruningEnv:
         return param
 
 
-    # def _init_data(self):
-    #     self.dataloader, _ = get_loaders(self.dataset, nsamples=self.n_samples, seed=self.args.seed, seqlen=2048, tokenizer=self.tokenizer)
-
     def _init_data(self):
-        print(self.dataset)
-        dataloader = []
-        seqlen=2048
-        nsamples=self.n_samples
-        random.seed(self.args.seed)
+        self.dataloader, _ = get_loaders(self.dataset, nsamples=self.n_samples, seed=self.args.seed, seqlen=2048, tokenizer=self.tokenizer)
 
-        self.dataloader_bench = []
-        task_list = []
-        task_list.append(self.dataset)
-        task_dict = get_task_dict(task_list)
+    # def _init_data(self):
+    #     print(self.dataset)
+    #     dataloader = []
+    #     seqlen=2048
+    #     nsamples=self.n_samples
+    #     random.seed(self.args.seed)
 
-        task = task_dict[self.dataset]
-        task_doc_func = task.training_docs
-        doc = task_doc_func()
+    #     self.dataloader_bench = []
+    #     task_list = []
+    #     task_list.append(self.dataset)
+    #     task_dict = get_task_dict(task_list)
 
-        for i in doc:
-            dataloader.append(task.doc_to_text(i))
+    #     task = task_dict[self.dataset]
+    #     task_doc_func = task.training_docs
+    #     doc = task_doc_func()
+
+    #     for i in doc:
+    #         dataloader.append(task.doc_to_text(i))
         
-        trainenc = self.tokenizer(" ".join(dataloader), return_tensors='pt')
-        for _ in range(nsamples):
-            # print(trainenc.input_ids.shape[1])
-            i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
-            j = i + seqlen
-            inp = trainenc.input_ids[:, i:j]
-            tar = inp.clone()
-            tar[:, :-1] = -100
-            self.dataloader_bench.append((inp, tar))
+    #     trainenc = self.tokenizer(" ".join(dataloader), return_tensors='pt')
+    #     for _ in range(nsamples):
+    #         # print(trainenc.input_ids.shape[1])
+    #         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
+    #         j = i + seqlen
+    #         inp = trainenc.input_ids[:, i:j]
+    #         tar = inp.clone()
+    #         tar[:, :-1] = -100
+    #         self.dataloader_bench.append((inp, tar))
 
     def prepare_calibration_input_opt(self):
         use_cache = self.model.config.use_cache
@@ -515,7 +516,7 @@ class WeightPruningEnv:
 
 
     def _validate(self, model):
-        # ppl = eval_ppl(model, self.tokenizer, self.device)
-        acc = eval_acc(model, self.dataset)
-        return acc
+        ppl = eval_ppl(model, self.tokenizer, self.device)
+        # acc = eval_acc(model, self.dataset)
+        return ppl
 
