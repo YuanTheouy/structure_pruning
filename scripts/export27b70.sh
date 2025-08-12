@@ -18,7 +18,6 @@
 # --- 1. 参数解析 ---
 PRESERVE_RATIO=0.7
 ENABLE_RECON=false
-ENABLE_DOWNSTREAM=false
 DATASET_NAME="wikitext2"
 EXPORT_PATH=""
 RATIOS=""
@@ -32,10 +31,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --enable-recon)
             ENABLE_RECON=true
-            shift
-            ;;
-        --enable-downstream)
-            ENABLE_DOWNSTREAM=true
             shift
             ;;
         --dataset)
@@ -68,7 +63,6 @@ if [ "$SHOW_HELP" = true ]; then
     echo "选项:"
     echo "  --preserve-ratio R    指定保留比例 (默认: 0.7)"
     echo "  --enable-recon        启用重构模式 (默认: 禁用)"
-    echo "  --enable-downstream   启用下游任务评估 (默认: 禁用)"
     echo "  --dataset NAME        指定数据集名称 (默认: wikitext2)"
     echo "  --export-path PATH    指定导出路径 (默认: 自动生成)"
     echo "  --ratios RATIOS       指定自定义剪枝比例 (逗号分隔)"
@@ -78,7 +72,6 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  $0                                    # 使用默认设置"
     echo "  $0 --preserve-ratio 0.8               # 保留80%参数"
     echo "  $0 --enable-recon                     # 启用重构模式"
-    echo "  $0 --enable-downstream                # 启用下游任务评估"
     echo "  $0 --dataset piqa                     # 使用PIQA数据集"
     echo "  $0 --export-path ./my_model.pth.tar   # 指定导出路径"
     exit 0
@@ -87,13 +80,13 @@ fi
 # --- 2. 预定义剪枝比例配置 ---
 # 根据保留比例选择对应的剪枝配置
 declare -A ratio_configs
-# ratio_configs[0.7]="1.0,1.0,0.2,0.42443848,1.0,0.4267578,1.0,1.0,1.0,1.0,0.2,0.24560547,1.0,0.2,1.0,0.2,1.0,0.3375244,1.0,1.0,1.0,0.57995605,1.0,0.6843262,1.0,0.2,1.0,1.0,1.0,0.5048828,1.0,0.92004395,0.4375,0.64538574,1.0,0.93444824,1.0,1.0,1.0,0.38012695,1.0,0.6040039,1.0,0.5489502,1.0,0.64274186,0.2,0.20010805"
-ratio_configs[0.7]="1.0, 1.0, 0.2, 0.6986084, 1.0, 0.23278809, 1.0, 0.4937744, 1.0, 0.6965332, 0.84375, 0.45922852, 1.0, 0.2, 1.0, 0.3630371, 1.0, 0.8062744, 1.0, 0.29541016, 1.0, 1.0, 1.0, 0.82592773, 1.0, 0.9406738, 1.0, 0.48132324, 1.0, 0.89746094, 1.0, 0.2, 1.0, 0.2, 1.0, 0.8847656, 1.0, 1.0, 1.0, 0.2, 1.0, 1.0, 0.2, 0.48449707, 1.0, 0.37390137, 1.0, 0.34182602"
+ratio_configs[0.7]="1.0, 1.0, 0.3125, 1.0, 0.34375, 0.30996093, 1.0, 0.3010742, 1.0, 1.0, 1.0, 0.30810547, 1.0, 0.30722657, 0.40625, 0.39140624, 1.0, 0.3220703, 1.0, 0.40429688, 1.0, 0.30234376, 1.0, 0.49345702, 1.0, 0.33818358, 1.0, 0.67890626, 1.0, 0.38837892, 1.0, 1.0, 1.0, 0.55458987, 1.0, 1.0, 1.0, 1.0, 1.0, 0.64501953, 0.34375, 0.84375, 1.0, 0.62705076, 1.0, 0.97265625, 1.0, 0.3006836, 1.0, 1.0, 1.0, 0.35019532, 0.34375, 0.33339843, 0.3125, 1.0, 1.0, 0.30058593, 1.0, 0.7254883, 0.3125, 1.0, 1.0, 0.7114894"
+# ratio_configs[0.7]="1.0, 1.0, 0.2, 0.6986084, 1.0, 0.23278809, 1.0, 0.4937744, 1.0, 0.6965332, 0.84375, 0.45922852, 1.0, 0.2, 1.0, 0.3630371, 1.0, 0.8062744, 1.0, 0.29541016, 1.0, 1.0, 1.0, 0.82592773, 1.0, 0.9406738, 1.0, 0.48132324, 1.0, 0.89746094, 1.0, 0.2, 1.0, 0.2, 1.0, 0.8847656, 1.0, 1.0, 1.0, 0.2, 1.0, 1.0, 0.2, 0.48449707, 1.0, 0.37390137, 1.0, 0.34182602"
 # ratio_configs[0.7]="1.0, 1.0, 0.2, 0.6986084, 1.0, 0.23278809, 1.0, 0.4937744, 1.0, 0.6965332, 1.0, 0.45922852, 1.0, 0.15, 1.0, 0.3630371, 1.0, 0.8062744, 1.0, 0.29541016, 1.0, 1.0, 1.0, 0.82592773, 1.0, 0.9406738, 1.0, 0.48132324, 1.0, 0.89746094, 1.0, 0.15, 1.0, 0.15, 1.0, 0.8847656, 1.0, 1.0, 1.0, 0.15, 1.0, 1.0, 0.2, 0.48449707, 1.0, 0.37390137, 1.0, 0.34182602"
 
 # --- 3. 固定参数配置 ---
-MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-1.3b"
-MODEL_NAME="opt-1.3b"
+MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-2.7b"
+MODEL_NAME="opt-2.7b"
 PRUNE_TYPE="para"
 LBOUND=0.15
 RBOUND=1.0
@@ -125,7 +118,7 @@ fi
 export HF_EVALUATE_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 # Force use of CUDA 12 libraries and exclude all other CUDA library paths
-# export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
+export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
 # Remove conda env lib path that might have conflicting CUDA libraries  
 export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "/home/theo/data/anaconda3/envs/amc_LLM/lib" | tr '\n' ':' | sed 's/:$//')
 # Set CUPY to use specific CUDA installation
@@ -140,19 +133,10 @@ else
     RECON_STATUS="禁用 (速度更快，精度稍低)"
 fi
 
-# --- 8. 下游任务评估参数配置 ---
-if [ "$ENABLE_DOWNSTREAM" = true ]; then
-    DOWNSTREAM_FLAG="--enable_downstream=true"
-    DOWNSTREAM_STATUS="启用 (评估下游任务性能，耗时较长)"
-else
-    DOWNSTREAM_FLAG="--enable_downstream=false"
-    DOWNSTREAM_STATUS="禁用 (仅评估PPL，速度较快)"
-fi
-
-# --- 9. 确保导出目录存在 ---
+# --- 8. 确保导出目录存在 ---
 mkdir -p "$(dirname "$EXPORT_PATH")"
 
-# --- 10. 显示配置信息 ---
+# --- 9. 显示配置信息 ---
 echo "=================================================================="
 echo "   AMC-LLM 模型导出 - OPT-1.3B 剪枝模型"
 echo "=================================================================="
@@ -162,7 +146,6 @@ echo "     - 数据集:           ${DATASET_NAME}"
 echo "     - 保留比例:         ${PRESERVE_RATIO}"
 echo "     - 剪枝类型:         ${PRUNE_TYPE}"
 echo "     - 重构模式:         ${RECON_STATUS}"
-echo "     - 下游任务评估:     ${DOWNSTREAM_STATUS}"
 echo "     - 随机种子:         ${SEED}"
 echo ""
 echo "    技术参数:"
@@ -177,8 +160,8 @@ echo "------------------------------------------------------------------"
 echo "  开始导出模型... "
 echo ""
 
-# --- 11. 执行导出命令 ---
-/home/theo/data/anaconda3/envs/amc_LLM/bin/python -u amc_searchPPO.py \
+# --- 10. 执行导出命令 ---
+python -u amc_searchPPO.py \
     --job=export \
     --model="${MODEL_PATH}" \
     --model_name="${MODEL_NAME}" \
@@ -190,7 +173,6 @@ echo ""
     --structure \
     --state_mode=0 \
     ${RECON_FLAG} \
-    ${DOWNSTREAM_FLAG} \
     --lbound=${LBOUND} \
     --rbound=${RBOUND} \
     --n_samples=${N_SAMPLES} \
@@ -200,14 +182,14 @@ echo ""
     --seed=${SEED} \
     --export_path="${EXPORT_PATH}"
 
-# --- 12. 导出完成提示 ---
+# --- 11. 导出完成提示 ---
 EXPORT_EXIT_CODE=$?
 echo ""
 echo "=================================================================="
 if [ ${EXPORT_EXIT_CODE} -eq 0 ]; then
     echo "模型导出完成！"
     echo "导出文件位于: ${EXPORT_PATH}"
-    echo "保留比例: ${PRESERVE_RATIO} | 重构模式: $([ "$ENABLE_RECON" = true ] && echo "已启用" || echo "已禁用") | 下游任务评估: $([ "$ENABLE_DOWNSTREAM" = true ] && echo "已启用" || echo "已禁用")"
+    echo "保留比例: ${PRESERVE_RATIO} | 重构模式: $([ "$ENABLE_RECON" = true ] && echo "已启用" || echo "已禁用")"
     
     # 显示文件大小信息
     if [ -f "${EXPORT_PATH}" ]; then

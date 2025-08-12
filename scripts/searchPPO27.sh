@@ -125,21 +125,21 @@ fi
 #                   ID:     0      1      2      3      4
 learning_rates=(          5e-4   5e-4   5e-4   5e-4)
 entropy_coeffs=(          0.01   0.01   0.05   0.05)
-learning_epochs=(         10     10     15     15)
+learning_epochs=(         10     10     10     10)
 clip_params=(             0.2    0.1    0.2    0.1)
 seeds=(                   2025   2026   2027   2028)
-num_collects=(            15     15     20     20)
+num_collects=(            15     15     15     15)
 
 # --- 3. 固定参数配置 ---
 MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-2.7b"
 MODEL_NAME="opt-2.7b"
 PRUNE_TYPE="para"
-LBOUND=0.2
+LBOUND=0.3
 RBOUND=1.0
 N_SAMPLES=64
 
 # Gumbel-Softmax 相关参数
-NUM_ACTION_BINS=4          # 动作离散化的bins数量
+NUM_ACTION_BINS=20          # 动作离散化的bins数量
 GUMBEL_TAU_INITIAL=2.0     # Gumbel-Softmax初始温度
 GUMBEL_TAU_FINAL=0.2       # Gumbel-Softmax最终温度
 GUMBEL_ANNEAL_EPISODES=1000  # 温度退火的episode数量

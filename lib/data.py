@@ -37,11 +37,11 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
 
     # 检查token ID范围
     vocab_size = tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else len(tokenizer.get_vocab())
-    print(f"=> Tokenizer vocab size: {vocab_size}")
+    # print(f"=> Tokenizer vocab size: {vocab_size}")
     
     max_token_id = trainenc.input_ids.max().item()
     min_token_id = trainenc.input_ids.min().item()
-    print(f"=> Train data token ID range: [{min_token_id}, {max_token_id}]")
+    # print(f"=> Train data token ID range: [{min_token_id}, {max_token_id}]")
     
     if max_token_id >= vocab_size or min_token_id < 0:
         print(f"=> 警告: 训练数据包含超出词汇表范围的token ID")

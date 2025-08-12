@@ -1,15 +1,15 @@
 #!/bin/bash
 # =================================================================================
-#    AMC-LLM 模型导出脚本 - OPT-1.3B 剪枝模型导出 (增强版)
+#    AMC-LLM 模型导出脚本 - Llama-2-7B 剪枝模型导出 (增强版)
 # =================================================================================
 #
 #   用法:
-#       1. 基础用法: ./scripts/export13b70.sh
-#       2. 指定保留比例: ./scripts/export13b70.sh --preserve-ratio 0.8
-#       3. 启用重构: ./scripts/export13b70.sh --enable-recon
-#       4. 指定导出路径: ./scripts/export13b70.sh --export-path ./my_model.pth.tar
-#       5. 指定数据集: ./scripts/export13b70.sh --dataset wikitext2
-#       6. 自定义剪枝比例: ./scripts/export13b70.sh --ratios "1.0,0.5,0.3,..."
+#       1. 基础用法: ./scripts/exportL770.sh
+#       2. 指定保留比例: ./scripts/exportL770.sh --preserve-ratio 0.8
+#       3. 启用重构: ./scripts/exportL770.sh --enable-recon
+#       4. 指定导出路径: ./scripts/exportL770.sh --export-path ./my_model.pth.tar
+#       5. 指定数据集: ./scripts/exportL770.sh --dataset wikitext2
+#       6. 自定义剪枝比例: ./scripts/exportL770.sh --ratios "1.0,0.5,0.3,..."
 #
 #   脚本将导出剪枝后的模型到指定路径。
 #
@@ -85,15 +85,15 @@ if [ "$SHOW_HELP" = true ]; then
 fi
 
 # --- 2. 预定义剪枝比例配置 ---
-# 根据保留比例选择对应的剪枝配置
+# 根据保留比例选择对应的剪枝配置 (针对Llama-2-7B优化)
 declare -A ratio_configs
-# ratio_configs[0.7]="1.0,1.0,0.2,0.42443848,1.0,0.4267578,1.0,1.0,1.0,1.0,0.2,0.24560547,1.0,0.2,1.0,0.2,1.0,0.3375244,1.0,1.0,1.0,0.57995605,1.0,0.6843262,1.0,0.2,1.0,1.0,1.0,0.5048828,1.0,0.92004395,0.4375,0.64538574,1.0,0.93444824,1.0,1.0,1.0,0.38012695,1.0,0.6040039,1.0,0.5489502,1.0,0.64274186,0.2,0.20010805"
-ratio_configs[0.7]="1.0, 1.0, 0.2, 0.6986084, 1.0, 0.23278809, 1.0, 0.4937744, 1.0, 0.6965332, 0.84375, 0.45922852, 1.0, 0.2, 1.0, 0.3630371, 1.0, 0.8062744, 1.0, 0.29541016, 1.0, 1.0, 1.0, 0.82592773, 1.0, 0.9406738, 1.0, 0.48132324, 1.0, 0.89746094, 1.0, 0.2, 1.0, 0.2, 1.0, 0.8847656, 1.0, 1.0, 1.0, 0.2, 1.0, 1.0, 0.2, 0.48449707, 1.0, 0.37390137, 1.0, 0.34182602"
-# ratio_configs[0.7]="1.0, 1.0, 0.2, 0.6986084, 1.0, 0.23278809, 1.0, 0.4937744, 1.0, 0.6965332, 1.0, 0.45922852, 1.0, 0.15, 1.0, 0.3630371, 1.0, 0.8062744, 1.0, 0.29541016, 1.0, 1.0, 1.0, 0.82592773, 1.0, 0.9406738, 1.0, 0.48132324, 1.0, 0.89746094, 1.0, 0.15, 1.0, 0.15, 1.0, 0.8847656, 1.0, 1.0, 1.0, 0.15, 1.0, 1.0, 0.2, 0.48449707, 1.0, 0.37390137, 1.0, 0.34182602"
+# Llama-2-7B 32层模型的剪枝配置 (64个参数: 32层 * 2个部分(attention+ffn))
+ratio_configs[0.7]="1.0,1.0,0.7,0.8,1.0,0.6,0.9,0.7,1.0,0.8,0.8,0.7,1.0,0.6,0.9,0.8,1.0,0.7,0.8,0.7,1.0,0.8,0.9,0.7,1.0,0.6,0.8,0.8,1.0,0.7,0.9,0.7,1.0,0.8,0.8,0.6,1.0,0.7,0.9,0.8,1.0,0.8,0.7,0.7,1.0,0.6,0.8,0.8,1.0,0.7,0.9,0.7,1.0,0.8,0.8,0.7,1.0,0.6,0.9,0.8,1.0,0.7,0.8,0.7"
+ratio_configs[0.8]="1.0,1.0,0.8,0.9,1.0,0.7,0.9,0.8,1.0,0.9,0.8,0.8,1.0,0.7,0.9,0.9,1.0,0.8,0.8,0.8,1.0,0.9,0.9,0.8,1.0,0.7,0.8,0.9,1.0,0.8,0.9,0.8,1.0,0.9,0.8,0.7,1.0,0.8,0.9,0.9,1.0,0.9,0.8,0.8,1.0,0.7,0.8,0.9,1.0,0.8,0.9,0.8,1.0,0.9,0.8,0.8,1.0,0.7,0.9,0.9,1.0,0.8,0.8,0.8"
 
 # --- 3. 固定参数配置 ---
-MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-1.3b"
-MODEL_NAME="opt-1.3b"
+MODEL_PATH="/home/theo/data/yx_repository/01_Models/llama-2-7b-hf"
+MODEL_NAME="llama-2-7b-hf"
 PRUNE_TYPE="para"
 LBOUND=0.15
 RBOUND=1.0
@@ -118,14 +118,14 @@ if [ -z "$EXPORT_PATH" ]; then
     if [ "$ENABLE_RECON" = true ]; then
         RECON_SUFFIX="_recon"
     fi
-    EXPORT_PATH="./checkpoints/opt13b_${RATIO_SUFFIX}_${DATASET_NAME}${RECON_SUFFIX}_${TIMESTAMP}_export.pth.tar"
+    EXPORT_PATH="./checkpoints/llama2_7b_${RATIO_SUFFIX}_${DATASET_NAME}${RECON_SUFFIX}_${TIMESTAMP}_export.pth.tar"
 fi
 
 # --- 6. 环境变量设置 ---
 export HF_EVALUATE_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 # Force use of CUDA 12 libraries and exclude all other CUDA library paths
-# export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
+export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
 # Remove conda env lib path that might have conflicting CUDA libraries  
 export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "/home/theo/data/anaconda3/envs/amc_LLM/lib" | tr '\n' ':' | sed 's/:$//')
 # Set CUPY to use specific CUDA installation
@@ -154,7 +154,7 @@ mkdir -p "$(dirname "$EXPORT_PATH")"
 
 # --- 10. 显示配置信息 ---
 echo "=================================================================="
-echo "   AMC-LLM 模型导出 - OPT-1.3B 剪枝模型"
+echo "   AMC-LLM 模型导出 - Llama-2-7B 剪枝模型"
 echo "=================================================================="
 echo "    导出配置:"
 echo "     - 模型路径:         ${MODEL_PATH}"
@@ -178,7 +178,7 @@ echo "  开始导出模型... "
 echo ""
 
 # --- 11. 执行导出命令 ---
-/home/theo/data/anaconda3/envs/amc_LLM/bin/python -u amc_searchPPO.py \
+python -u amc_searchPPO.py \
     --job=export \
     --model="${MODEL_PATH}" \
     --model_name="${MODEL_NAME}" \
@@ -205,7 +205,7 @@ EXPORT_EXIT_CODE=$?
 echo ""
 echo "=================================================================="
 if [ ${EXPORT_EXIT_CODE} -eq 0 ]; then
-    echo "模型导出完成！"
+    echo "Llama-2-7B 模型导出完成！"
     echo "导出文件位于: ${EXPORT_PATH}"
     echo "保留比例: ${PRESERVE_RATIO} | 重构模式: $([ "$ENABLE_RECON" = true ] && echo "已启用" || echo "已禁用") | 下游任务评估: $([ "$ENABLE_DOWNSTREAM" = true ] && echo "已启用" || echo "已禁用")"
     
@@ -215,6 +215,6 @@ if [ ${EXPORT_EXIT_CODE} -eq 0 ]; then
         echo "文件大小: ${FILE_SIZE}"
     fi
 else
-    echo "模型导出失败 (退出码: ${EXPORT_EXIT_CODE})"
+    echo "Llama-2-7B 模型导出失败 (退出码: ${EXPORT_EXIT_CODE})"
 fi
 echo "=================================================================="

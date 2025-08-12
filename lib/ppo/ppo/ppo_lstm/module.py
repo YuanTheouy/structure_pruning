@@ -78,26 +78,54 @@ class Gaussian(nn.Module):
     # gpu version is faster than cpu multiprocessing version
     def __init__(self, dim, init_std):
         super().__init__()
-        self.std = nn.Parameter(init_std * torch.ones(dim))
+        # 仍然学习 log_std 以保证 std > 0
+        initial_log_std = torch.log(torch.tensor(init_std, dtype=torch.float32) + 1e-8)
+        self.log_std = nn.Parameter(initial_log_std * torch.ones(dim))
+
+    # --- 核心改动：添加 @property ---
+    @property
+    def std(self) -> torch.Tensor:
+        """
+        让外部代码可以通过 .std 访问到计算出的标准差，
+        同时保证其值永远为正。
+        """
+        return torch.exp(self.log_std)
 
     def sample(self, logits):
         with torch.inference_mode():
+            # 现在可以直接使用 self.std，因为它是一个 property
             sample = torch.normal(logits, self.std)
             logprob = calc_logprob(logits, self.std, sample).sum(dim=-1)
             return sample, logprob
 
     def calc_logprob_entropy(self, logits, sample):
+        # 这里也直接使用 self.std
         logprob = calc_logprob(logits, self.std, sample).sum(dim=-1)
         entropy = calc_entropy(self.std).sum(dim=-1).repeat(logprob.shape)
         return logprob, entropy
 
-    def set_std(self, std):
-        self.std.data[:] = std
+    def set_std(self, std_val):
+        # 外部设置 std 时，我们仍然是更新内部的 log_std
+        self.log_std.data[:] = torch.log(torch.tensor(std_val, device=self.log_std.device) + 1e-8)
 
     def clamp_std(self, min=None, max=None, indices=None):
-        if min is not None or max is not None:
-            self.std.data[indices].clamp_(min=min, max=max)
+        # clamp 操作仍然在 log 空间中进行
+        with torch.no_grad():
+            if min is not None:
+                min_log_std = torch.log(torch.tensor(min, device=self.log_std.device) + 1e-8)
+            else:
+                min_log_std = None
 
+            if max is not None:
+                max_log_std = torch.log(torch.tensor(max, device=self.log_std.device) + 1e-8)
+            else:
+                max_log_std = None
+
+            if min is not None or max is not None:
+                if indices is None:
+                    self.log_std.data.clamp_(min=min_log_std, max=max_log_std)
+                else:
+                    self.log_std.data[indices].clamp_(min=min_log_std, max=max_log_std)
 
 # >>> ADD THE FOLLOWING NEW CLASS
 class GumbelActor(nn.Module):

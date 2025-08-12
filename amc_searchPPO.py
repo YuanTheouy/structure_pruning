@@ -14,13 +14,12 @@ torch.backends.cudnn.deterministic = True
 from env.channel_pruning_env_llm_global import ChannelPruningEnv
 from env.weight_pruning_env_llm_global import WeightPruningEnv
 from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian, GumbelActor
-from lib.utils import get_output_folder
+from lib.utils import get_output_folder, prGreen, prRed
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
 from feature_extractor import FeatureOrchestrator  # 使用新的模块化特征编排器
 from feature_configs import get_config_by_name, PREDEFINED_CONFIGS  # 导入配置管理
 from lib.data import get_loaders
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description='AMC search script')
@@ -90,6 +89,18 @@ def parse_args():
     parser.add_argument('--lamda', default=0.95, type=float, help='PPO GAE lambda')
     parser.add_argument('--max_grad_norm', default=0.5, type=float, help='PPO max gradient norm')
     
+    # Gradual pruning parameters    
+    parser.add_argument('--use_gradual_pruning', action='store_true',
+                        help='Enable gradual pruning with a cubic schedule.')
+    parser.add_argument('--gradual_final_sparsity', default=0.5, type=float,
+                        help='The final target sparsity (1 - preserve_ratio) for the gradual schedule.')
+    parser.add_argument('--gradual_initial_sparsity', default=0.0, type=float,
+                        help='The initial sparsity to start the gradual schedule from. Default is 0.0.')
+    parser.add_argument('--gradual_pruning_start_episode', default=0, type=int,
+                        help='The episode number to start the gradual pruning process.')
+    parser.add_argument('--gradual_pruning_end_episode', default=600, type=int,
+                        help='The episode number to end the gradual pruning process (e.g., 80% of total episodes).')
+
     # GPU parameter
     parser.add_argument('--gpu_id', default=0, type=int, help='GPU device ID to use')
     
@@ -166,13 +177,31 @@ def train(num_episode, agent, env, output):
     episode_reward = 0.
     observation = None
     summary=None
-
+    
+    # --- 新增逻辑：设置渐进式剪枝参数 ---
+    if args.use_gradual_pruning:
+        print("=> Gradual Pruning Schedule Enabled.")
+        print(f"   Target Sparsity: {args.gradual_final_sparsity}")
+        print(f"   Schedule: Episode {args.gradual_pruning_start_episode} to {args.gradual_pruning_end_episode}")
+        
+        # 计算剪枝过程的总时长
+        t0 = args.gradual_pruning_start_episode
+        tf = args.gradual_pruning_end_episode
+        pruning_duration = tf - t0
+        if pruning_duration <= 0:
+            raise ValueError("gradual_pruning_end_episode must be greater than start_episode.")
+    # ------------------------------------
+    
     # Setup Gumbel-Softmax temperature annealing schedule if enabled
     if args.use_gumbel_softmax:
         tau_schedule = np.linspace(args.gumbel_tau_initial, args.gumbel_tau_final, args.gumbel_anneal_episodes)
         print(f"Gumbel temperature annealing enabled: from {args.gumbel_tau_initial} to {args.gumbel_tau_final} over {args.gumbel_anneal_episodes} episodes.")
 
+    # 初始化 preserve ratio 变量 (在渐进剪枝之外也可用)
+    current_preserve_ratio = args.preserve_ratio
+    
     while episode < num_episode:  # counting based on episode
+        
         
         # Update Gumbel temperature at the start of each episode
         if args.use_gumbel_softmax:
@@ -194,6 +223,43 @@ def train(num_episode, agent, env, output):
                 if observation is None:
                     observation = deepcopy(env.reset())
                     # observation = np.expand_dims(observation, 0) # State is now a matrix
+                
+                # --- 新增逻辑：在每个episode开始时，计算并设置当前的目标保留率 ---
+                if args.use_gradual_pruning:
+                    if t0 <= episode < tf:
+                        # 在剪枝窗口内，应用三次方调度公式
+                        current_progress = (episode - t0) / pruning_duration
+                        # 直接对preserve ratio进行调度：从高preserve ratio到低preserve ratio
+                        # preserve_t = preserve_f + (preserve_i - preserve_f) * (1 - progress)^3
+                        preserve_i = 1.0 - args.gradual_initial_sparsity  # 初始保留率
+                        preserve_f = args.preserve_ratio  # 最终保留率 
+                        current_preserve_ratio = preserve_f + (preserve_i - preserve_f) * (1 - current_progress)**3
+                    elif episode >= tf:
+                        # 达到结束点后，保持最终保留率
+                        current_preserve_ratio = args.preserve_ratio
+                    else: # episode < t0
+                        # 开始前，使用初始保留率
+                        current_preserve_ratio = 1.0 - args.gradual_initial_sparsity
+                    
+                    # 将新的目标注入环境中
+                    env.update_target_ratio(current_preserve_ratio)
+
+                    # 计算当前稀疏度用于显示
+                    current_sparsity = 1.0 - current_preserve_ratio
+
+                    # 写入TensorBoard以便观察
+                    tfwriter.add_scalar('schedule/target_preserve_ratio', current_preserve_ratio, episode)
+                    tfwriter.add_scalar('schedule/target_sparsity', current_sparsity, episode)
+                    
+                    # 写入文本日志
+                    text_writer.write(f"Episode {episode}: preserve_ratio={current_preserve_ratio:.6f}, sparsity={current_sparsity:.6f}\n")
+                    text_writer.flush()
+                else:
+                    # 如果没有启用gradual pruning，也显示固定的preserve ratio
+                    print(f"\n{'='*60}")
+                    print(f"  EPISODE {episode}: FIXED PRESERVE RATIO = {env.preserve_ratio:.4f}")
+                    print(f"{'='*60}")
+                # -----------------------------------------------------------------
                 
                 # If using new features, observation is a single feature vector, need to add batch dimension
                 if not args.use_new_input:
@@ -231,18 +297,65 @@ def train(num_episode, agent, env, output):
 
 
             if done:  # end of episode
-                print('#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
-                                                                                        info['ppl'],
-                                                                                        info['compress_ratio'],
-                                                                                        info['para_ratio']))
-                text_writer.write(
-                    '#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
-                                                                                        info['ppl'],
-                                                                                        info['compress_ratio'],
-                                                                                        info['para_ratio']))
-                if reward > env.best_reward:
-                    agent.save_model(output)
+                # print('#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
+                #                                                                         info['ppl'],
+                #                                                                         info['compress_ratio'],
+                #                                                                         info['para_ratio']))
+                # text_writer.write(
+                #     '#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
+                #                                                                         info['ppl'],
+                #                                                                         info['compress_ratio'],
+                #                                                                         info['para_ratio']))
+                # if reward > env.best_reward:
+                #     agent.save_model(output)
 
+                # 1. 准备一个统一的、详细的日志格式
+                log_message_template = (
+                    "#{episode}: reward={reward:.4f}, ppl={ppl:.4f}, "
+                    "compress_ratio={compress:.4f}, para_ratio={para:.4f}, "
+                    "expect_preserve_ratio={expect_preserve:.4f}\n"
+                    "Policy: {policy}"
+                )
+                
+                # 2. 格式化日志内容
+                log_content = log_message_template.format(
+                    episode=episode,
+                    reward=episode_reward,
+                    ppl=info.get('ppl', float('nan')), # 使用 .get 保证安全
+                    compress=info['compress_ratio'],
+                    para=info['para_ratio'],
+                    expect_preserve=current_preserve_ratio,
+                    policy=env.action # 使用 env.action 获取当前轮的策略
+                )
+
+                # 3. 根据不同情况，使用不同颜色打印
+                is_best = reward > env.best_reward
+                is_nan = np.isnan(info.get('ppl', float('nan')))
+
+                if is_nan:
+                    prRed(log_content)
+                elif is_best:
+                    prGreen(log_content)
+                else:
+                    print(log_content) # 普通情况使用默认颜色
+
+                # 4. 写入文件日志 (逻辑不变)
+                text_writer.write(log_content + '\n')
+                
+                # 5. 更新最佳奖励和模型的逻辑现在独立出来
+                if is_best:
+                    # 更新 env 内部的最佳状态
+                    env.best_reward = reward
+                    env.best_strategy = env.action.copy()
+                    env.best_d_prime_list = env.d_prime_list.copy()
+                    
+                    # 保存模型
+                    agent.save_model(output)
+                    
+                    # (可选) 可以在这里打印一条精简的最佳提示
+                    prGreen(f"    -> New best reward found and model saved.")
+                
+                
                 # reset
                 observation = None
                 episode_steps = 0
@@ -410,24 +523,16 @@ if __name__ == "__main__":
 
     # 强制GPU绑定 - 确保每个进程严格使用指定GPU
     # 严格GPU绑定 - 简单直接的方案
-    if hasattr(args, 'gpu_id') and args.gpu_id is not None and torch.cuda.is_available():
-        # 强制设置CUDA_VISIBLE_DEVICES，确保进程只能看到指定GPU
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
-        print(f'=> [STRICT GPU BINDING] CUDA_VISIBLE_DEVICES={args.gpu_id}')
-        print(f'=> Process will only see GPU {args.gpu_id}')
-        
-        # 由于只有一个GPU可见，PyTorch设备ID就是0
-        if torch.cuda.device_count() > 0:
-            torch.cuda.set_device(0)
-            print(f'=> PyTorch device set to cuda:0 (physical GPU {args.gpu_id})')
-        else:
-            print(f'=> ERROR: No CUDA devices visible after setting CUDA_VISIBLE_DEVICES={args.gpu_id}')
-            sys.exit(1)
-    elif torch.cuda.is_available():
-        print('=> No GPU ID specified, using default GPU allocation')
+    # GPU可用性检查与日志记录
+    if torch.cuda.is_available():
+        # Python代码不再修改CUDA_VISIBLE_DEVICES，它由启动脚本全权负责
+        # 我们只打印出当前进程能看到的GPU数量
+        print(f"=> PyTorch detected {torch.cuda.device_count()} available GPU(s).")
+        print(f"=> This process can see GPUs with IDs: {os.environ.get('CUDA_VISIBLE_DEVICES', 'All')}")
+        # Hugging Face device_map='auto' 会自动处理多GPU的分配
     else:
         print('=> CUDA not available, using CPU')
-
+        
     if args.seed is not None:
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)

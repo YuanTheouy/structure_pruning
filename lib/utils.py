@@ -173,8 +173,23 @@ def get_output_folder(parent_dir, env_name):
 
 
 # Custom progress bar
-_, term_width = os.popen('stty size', 'r').read().split()
-term_width = int(term_width)
+# _, term_width = os.popen('stty size', 'r').read().split()
+# term_width = int(term_width)
+# TOTAL_BAR_LENGTH = 40.
+# last_time = time.time()
+# begin_time = last_time
+
+import shutil  # 确保在文件顶部导入
+import time    # 确保 time 已导入
+
+# Custom progress bar
+try:
+    # 优先使用现代、安全的方式获取终端宽度
+    term_width = shutil.get_terminal_size().columns
+except OSError:
+    # 如果在非交互式环境（如sbatch）中运行，则回退到一个默认值
+    term_width = 80  # 您可以根据需要调整这个默认宽度，80是一个标准值
+
 TOTAL_BAR_LENGTH = 40.
 last_time = time.time()
 begin_time = last_time
