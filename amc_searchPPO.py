@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Code for "AMC: AutoML for Model Compression and Acceleration on Mobile Devices"
 # Yihui He*, Ji Lin*, Zhijian Liu, Hanrui Wang, Li-Jia Li, Song Han
 # {jilin, songhan}@mit.edu
@@ -17,9 +18,56 @@ from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian, GumbelActor
 from lib.utils import get_output_folder, prGreen, prRed
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
-from feature_extractor import FeatureOrchestrator  # 使用新的模块化特征编排器
-from feature_configs import get_config_by_name, PREDEFINED_CONFIGS  # 导入配置管理
+from feature_extractor import FeatureOrchestrator  # Use new modularized feature orchestrator
+from feature_configs import get_config_by_name, PREDEFINED_CONFIGS  # Import configuration management
 from lib.data import get_loaders
+
+# ================== MEMORY PROFILING HELPERS ==================
+def get_tensor_memory(component):
+    """
+    Calculate the GPU memory usage of all CUDA tensors in a PyTorch module or optimizer (unit: MiB).
+    """
+    total_mem = 0
+    if isinstance(component, torch.nn.Module):
+        # Calculate memory usage of model parameters
+        for param in component.parameters():
+            if param.is_cuda:
+                total_mem += param.element_size() * param.nelement()
+    elif isinstance(component, torch.optim.Optimizer):
+        # Calculate optimizer state memory usage (e.g., Adam's momentum and variance)
+        for state in component.state.values():
+            for v in state.values():
+                if torch.is_tensor(v) and v.is_cuda:
+                     total_mem += v.element_size() * v.nelement()
+    # Calculate gradient memory usage
+    if isinstance(component, torch.nn.Module):
+        for param in component.parameters():
+            if param.grad is not None and param.grad.is_cuda:
+                total_mem += param.grad.element_size() * param.grad.nelement()
+
+    return total_mem / (1024 ** 2)
+
+def report_vram_usage(point_in_code: str, device=0):
+    """
+    Report current and peak VRAM usage at specific points in the code.
+    """
+    print(f"--- VRAM Report at: {point_in_code} ---")
+    # torch.cuda.memory_allocated(): Current memory occupied by Tensors
+    # torch.cuda.max_memory_allocated(): Peak memory occupied by Tensors since program start or last reset
+    # torch.cuda.memory_reserved(): Total memory pool size requested by PyTorch from CUDA driver
+    # torch.cuda.max_memory_reserved(): Peak memory pool size requested by PyTorch
+    allocated = torch.cuda.memory_allocated(device) / (1024 ** 2)
+    max_allocated = torch.cuda.max_memory_allocated(device) / (1024 ** 2)
+    reserved = torch.cuda.memory_reserved(device) / (1024 ** 2)
+    max_reserved = torch.cuda.max_memory_reserved(device) / (1024 ** 2)
+
+    print(f"  - VRAM Allocated: {allocated:.2f} MiB")
+    print(f"  - VRAM Peak Allocated: {max_allocated:.2f} MiB")
+    print(f"  - VRAM Reserved: {reserved:.2f} MiB")
+    print(f"  - VRAM Peak Reserved: {max_reserved:.2f} MiB")
+    print("-" * 50)
+# =============================================================
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='AMC search script')
@@ -107,6 +155,8 @@ def parse_args():
     # Downstream task evaluation
     parser.add_argument('--enable_downstream', default='false', type=str, 
                         help='Enable downstream task evaluation (true/false)')
+    parser.add_argument('--delayed_downstream_eval', action='store_true',
+                        help='Delay downstream evaluation until after pruning+reconstruction is complete (for export mode)')
 
     parser.add_argument('--learning_epoch', default=10, type=int, help='')
     parser.add_argument('--tau', default=0.01, type=float, help='moving average for target network')
@@ -133,13 +183,14 @@ def parse_args():
     parser.add_argument('--export_path', default=None, type=str, help='path for exporting models')
     parser.add_argument('--agent_path', default=None, type=str, help='path for off-line loading agent')
     parser.add_argument('--use_new_input', dest='use_new_input', action='store_true', help='use new input feature')
-    parser.add_argument('--state_mode', default=1, type=int, choices=[0, 1], 
-                        help='Agent state mode: 0=global pruning ratio, 1=feature extraction state')
+    parser.add_argument('--state_mode', default=0, type=int, choices=[0, 1], 
+                        help='Agent state mode: 0=global pruning ratio (default), 1=feature extraction state')
     parser.add_argument('--feature_config', default='default', type=str, 
                         choices=list(PREDEFINED_CONFIGS.keys()),
                         help='Name of the feature configuration to use from feature_configs.py')
     parser.add_argument('--metric', default='input', type=str, help='input or wanda')
     parser.add_argument('--feat', default='mean', type=str, help='mean or flat')
+    parser.add_argument('--resume_from_checkpoint', default=None, type=str, help='Path to a training checkpoint to resume from.')
 
     # >>> ADD THE FOLLOWING CODE BLOCK
     # Gumbel-Softmax specific parameters
@@ -154,7 +205,27 @@ def parse_args():
     parser.add_argument('--gumbel_anneal_episodes', default=500, type=int, 
                         help='Number of episodes to anneal Gumbel temperature.')
     # >>> END OF CODE BLOCK
-
+    # MODIFICATION 1: Add new arguments
+    # Remove old reward subset parameters since we're simplifying
+    # parser.add_argument('--reward_subset_size_small', type=float, default=0.05, 
+    #                     help='Percentage of validation set for fast evaluation')
+    # parser.add_argument('--reward_subset_size_large', type=float, default=0.2,
+    #                     help='Percentage of validation set for accurate evaluation')
+    # parser.add_argument('--use_staged_eval', action='store_true',
+    #                     help='Enable staged evaluation (small batch then large batch)')
+    
+    # Dataset progressive growth parameters
+    parser.add_argument('--use_dataset_growth', action='store_true',
+                        help='Enable dataset progressive growth with a cubic schedule.')
+    parser.add_argument('--dataset_initial_ratio', default=1.0, type=float,
+                        help='Initial ratio of the dataset to use (0.0-1.0).')
+    parser.add_argument('--dataset_final_ratio', default=1.0, type=float,
+                        help='Final ratio of the dataset to use (0.0-1.0).')
+    parser.add_argument('--dataset_growth_start_episode', default=0, type=int,
+                        help='Episode number to start the dataset growth process.')
+    parser.add_argument('--dataset_growth_end_episode', default=200, type=int,
+                        help='Episode number to end the dataset growth process.')
+    
     return parser.parse_args()
 
 
@@ -173,198 +244,206 @@ def get_llm(model, cache_dir="llm_weights"):
 
 def train(num_episode, agent, env, output):
     global tfwriter, text_writer
+    # ====================  ▼▼▼ 添加这个代码块 ▼▼▼ ====================
+    start_episode = 0
+    if args.resume_from_checkpoint and os.path.isfile(args.resume_from_checkpoint):
+        print(f"=> Loading checkpoint '{args.resume_from_checkpoint}'")
+        checkpoint = torch.load(args.resume_from_checkpoint, map_location='cpu')
+        
+        agent.load_state_dict(checkpoint['agent_state_dict'])
+        start_episode = checkpoint['episode']
+        env.best_reward = checkpoint.get('best_reward', -1e9)
+        env.best_strategy = checkpoint.get('best_strategy', None)
+        
+        print(f"=> Loaded checkpoint. Resuming training from episode {start_episode}")
+    # ======================================================================
     step = episode = episode_steps = 0
     episode_reward = 0.
     observation = None
-    summary=None
+    summary = None
     
-    # --- 新增逻辑：设置渐进式剪枝参数 ---
+    # --- 初始化Epoch级逻辑所需的状态变量 ---
+    last_update_episode = 0
+
+    # 渐进式剪枝参数设置
     if args.use_gradual_pruning:
         print("=> Gradual Pruning Schedule Enabled.")
         print(f"   Target Sparsity: {args.gradual_final_sparsity}")
         print(f"   Schedule: Episode {args.gradual_pruning_start_episode} to {args.gradual_pruning_end_episode}")
         
-        # 计算剪枝过程的总时长
         t0 = args.gradual_pruning_start_episode
         tf = args.gradual_pruning_end_episode
         pruning_duration = tf - t0
         if pruning_duration <= 0:
             raise ValueError("gradual_pruning_end_episode must be greater than start_episode.")
-    # ------------------------------------
     
-    # Setup Gumbel-Softmax temperature annealing schedule if enabled
+    # 数据集渐进增长参数设置
+    if args.use_dataset_growth:
+        print("=> Dataset Progressive Growth Schedule Enabled (Staircase Mode).")
+        print(f"   Initial Dataset Ratio: {args.dataset_initial_ratio} ({args.dataset_initial_ratio*100:.1f}% of validation set)")
+        print(f"   Final Dataset Ratio: {args.dataset_final_ratio} ({args.dataset_final_ratio*100:.1f}% of validation set)")
+        print(f"   Schedule: Episode {args.dataset_growth_start_episode} to {args.dataset_growth_end_episode}")
+        
+        dt0 = args.dataset_growth_start_episode
+        dtf = args.dataset_growth_end_episode
+        dataset_growth_duration = dtf - dt0
+        if dataset_growth_duration <= 0:
+            raise ValueError("dataset_growth_end_episode must be greater than start_episode.")
+    else:
+        print("=> Using full validation set for evaluation.")
+    
+    # Gumbel-Softmax温度退火设置
     if args.use_gumbel_softmax:
         tau_schedule = np.linspace(args.gumbel_tau_initial, args.gumbel_tau_final, args.gumbel_anneal_episodes)
         print(f"Gumbel temperature annealing enabled: from {args.gumbel_tau_initial} to {args.gumbel_tau_final} over {args.gumbel_anneal_episodes} episodes.")
 
-    # 初始化 preserve ratio 变量 (在渐进剪枝之外也可用)
     current_preserve_ratio = args.preserve_ratio
     
-    while episode < num_episode:  # counting based on episode
-        
-        
-        # Update Gumbel temperature at the start of each episode
-        if args.use_gumbel_softmax:
-            if episode < args.gumbel_anneal_episodes:
-                current_tau = tau_schedule[episode]
-            else:
-                current_tau = args.gumbel_tau_final
+    # --- [主训练循环开始] ---
+    while episode < num_episode:
+        # ====================  ▼▼▼ 添加这三行 ▼▼▼ ====================
+        if episode < start_episode:
+            episode += 1
+            continue
+        # ======================================================================
+        # --- [Epoch级逻辑] - 在每个更新周期(e.g., 15 episodes)开始前执行 ---
+        # 这个代码块确保了评估集的大小和内容只在周期的边界发生改变。
+        if episode - last_update_episode >= agent.num_collects or episode == 0:
+            if episode > 0:
+                print(f"--- Epoch End (Episode {episode}) ---")
             
-            # Set the new temperature in the actor
-            agent.actor.set_tau(current_tau)
-            
-            # Log the temperature periodically
-            if episode % 20 == 0: # Log every 20 episodes
-                tfwriter.add_scalar('hparams/gumbel_tau', current_tau, episode)
+            # --- [修改后的核心逻辑] ---
+            # 1. 首先处理数据集尺寸的阶梯式增长
+            if args.use_dataset_growth:
+                dataset_progress = np.clip((episode - dt0) / dataset_growth_duration, 0.0, 1.0)
+                initial_ratio = args.dataset_initial_ratio
+                final_ratio = args.dataset_final_ratio
+                current_dataset_ratio = initial_ratio + (final_ratio - initial_ratio) * dataset_progress**3
+                current_dataset_ratio = max(initial_ratio, min(current_dataset_ratio, final_ratio))
+                
+                # 更新环境中的数据集比例 (这将自动触发重采样)
+                if hasattr(env, 'update_dataset_ratio'):
+                    env.update_dataset_ratio(current_dataset_ratio)
+                
+                print(f"=> New Epoch Start: Current dataset ratio updated to {current_dataset_ratio:.3f} ({current_dataset_ratio*100:.1f}%)")
+                tfwriter.add_scalar('hparams/dataset_ratio', current_dataset_ratio, episode)
 
+            # 2. 如果不使用增长模式，也要在每个周期开始时重采样，以防止过拟合
+            else:
+                 print(f"=> New Epoch Start: Resampling reward evaluation set...")
+                 if hasattr(env, 'resample_reward_eval_set'):
+                    env.resample_reward_eval_set()
+            # --- [修改结束] ---
+
+            print("---------------------------------")
+            last_update_episode = episode
+        
+        # --- [Episode级数据收集循环] ---
+        # 在这个循环中，数据集的大小和内容将保持不变
         for i in range(agent.num_collects):
-            # reset if it is the start of episode
             with torch.inference_mode():
                 if observation is None:
+                    if args.use_gradual_pruning and episode < args.gradual_pruning_start_episode:
+                        initial_preserve_ratio = 1.0 - args.gradual_initial_sparsity
+                        env.update_target_ratio(initial_preserve_ratio)
+                    
                     observation = deepcopy(env.reset())
-                    # observation = np.expand_dims(observation, 0) # State is now a matrix
-                
-                # --- 新增逻辑：在每个episode开始时，计算并设置当前的目标保留率 ---
+
                 if args.use_gradual_pruning:
-                    if t0 <= episode < tf:
-                        # 在剪枝窗口内，应用三次方调度公式
-                        current_progress = (episode - t0) / pruning_duration
-                        # 直接对preserve ratio进行调度：从高preserve ratio到低preserve ratio
-                        # preserve_t = preserve_f + (preserve_i - preserve_f) * (1 - progress)^3
-                        preserve_i = 1.0 - args.gradual_initial_sparsity  # 初始保留率
-                        preserve_f = args.preserve_ratio  # 最终保留率 
-                        current_preserve_ratio = preserve_f + (preserve_i - preserve_f) * (1 - current_progress)**3
-                    elif episode >= tf:
-                        # 达到结束点后，保持最终保留率
-                        current_preserve_ratio = args.preserve_ratio
-                    else: # episode < t0
-                        # 开始前，使用初始保留率
-                        current_preserve_ratio = 1.0 - args.gradual_initial_sparsity
-                    
-                    # 将新的目标注入环境中
+                    current_progress = np.clip((episode - t0) / pruning_duration, 0.0, 1.0)
+                    preserve_i = 1.0 - args.gradual_initial_sparsity
+                    preserve_f = args.preserve_ratio
+                    current_preserve_ratio = preserve_f + (preserve_i - preserve_f) * (1 - current_progress)**3
                     env.update_target_ratio(current_preserve_ratio)
-
-                    # 计算当前稀疏度用于显示
                     current_sparsity = 1.0 - current_preserve_ratio
-
-                    # 写入TensorBoard以便观察
-                    tfwriter.add_scalar('schedule/target_preserve_ratio', current_preserve_ratio, episode)
-                    tfwriter.add_scalar('schedule/target_sparsity', current_sparsity, episode)
-                    
-                    # 写入文本日志
-                    text_writer.write(f"Episode {episode}: preserve_ratio={current_preserve_ratio:.6f}, sparsity={current_sparsity:.6f}\n")
-                    text_writer.flush()
-                else:
-                    # 如果没有启用gradual pruning，也显示固定的preserve ratio
-                    print(f"\n{'='*60}")
-                    print(f"  EPISODE {episode}: FIXED PRESERVE RATIO = {env.preserve_ratio:.4f}")
-                    print(f"{'='*60}")
-                # -----------------------------------------------------------------
                 
-                # If using new features, observation is a single feature vector, need to add batch dimension
+                # Gumbel温度更新逻辑
+                if args.use_gumbel_softmax:
+                    current_tau = args.gumbel_tau_final
+                    if episode < args.gumbel_anneal_episodes:
+                        current_tau = tau_schedule[episode]
+                    agent.actor.set_tau(current_tau)
+                    if episode % 20 == 0:
+                        tfwriter.add_scalar('hparams/gumbel_tau', current_tau, episode)
+
+                # State形状处理逻辑
                 if not args.use_new_input:
-                    observation = np.expand_dims(observation, 0)
-                else:
-                    # For new input features, ensure we have the correct batch dimension
+                    if isinstance(observation, (int, float)):
+                        observation = np.array([observation], dtype=np.float32)
+                    elif observation.ndim == 0:
+                        observation = np.expand_dims(observation, 0)
                     if observation.ndim == 1:
                         observation = np.expand_dims(observation, 0)
-
+                else:
+                    if observation.ndim == 1:
+                        observation = np.expand_dims(observation, 0)
+                    elif observation.ndim == 0:
+                        observation = np.array([[observation]], dtype=np.float32)
+                
+                if episode == 0 and i == 0: # 只在最开始打印一次
+                    print(f"=> [调试] 状态形状: {observation.shape}, 状态内容: {observation}")
+                
+                # Agent核心交互
                 action = agent.act(observation)
-                # action = np.expand_dims(action)
-                # env response with next_observation, reward, terminate_info
                 next_observation, reward, done, info = env.step(np.squeeze(action))
                 
+                # 对 next_observation 进行同样的状态形状处理
                 if not args.use_new_input:
-                    next_observation = np.expand_dims(next_observation, 0)
-                else:
-                    # For new input features, ensure we have the correct batch dimension
-                    if next_observation.ndim == 1:
+                    if isinstance(next_observation, (int, float)):
+                        next_observation = np.array([next_observation], dtype=np.float32)
+                    elif hasattr(next_observation, 'ndim') and next_observation.ndim == 0:
                         next_observation = np.expand_dims(next_observation, 0)
-
-                # [optional] save intermideate model
-                save_interval = max(1, int(num_episode / 100))  # Avoid division by zero
-                if episode % save_interval == 0:
-                    agent.save_model(output)
-
-                # update
-                step += 1
-                episode_steps += 1
-                episode_reward += reward
-                timeout = np.array([0], dtype=bool)
-                observation = deepcopy(next_observation)
-
-                agent.step(next_observation, reward, done, timeout)
-
-
-            if done:  # end of episode
-                # print('#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
-                #                                                                         info['ppl'],
-                #                                                                         info['compress_ratio'],
-                #                                                                         info['para_ratio']))
-                # text_writer.write(
-                #     '#{}: episode_reward:{:.4f} ppl: {:.4f} ratio: {:.4f}, para: {:.4f}'.format(episode, episode_reward,
-                #                                                                         info['ppl'],
-                #                                                                         info['compress_ratio'],
-                #                                                                         info['para_ratio']))
-                # if reward > env.best_reward:
-                #     agent.save_model(output)
-
-                # 1. 准备一个统一的、详细的日志格式
-                log_message_template = (
-                    "#{episode}: reward={reward:.4f}, ppl={ppl:.4f}, "
-                    "compress_ratio={compress:.4f}, para_ratio={para:.4f}, "
-                    "expect_preserve_ratio={expect_preserve:.4f}\n"
-                    "Policy: {policy}"
-                )
+                    if hasattr(next_observation, 'ndim') and next_observation.ndim == 1:
+                        next_observation = np.expand_dims(next_observation, 0)
+                else:
+                    if hasattr(next_observation, 'ndim'):
+                        if next_observation.ndim == 1:
+                            next_observation = np.expand_dims(next_observation, 0)
+                        elif next_observation.ndim == 0:
+                            next_observation = np.array([[next_observation]], dtype=np.float32)
                 
-                # 2. 格式化日志内容
-                log_content = log_message_template.format(
-                    episode=episode,
-                    reward=episode_reward,
-                    ppl=info.get('ppl', float('nan')), # 使用 .get 保证安全
-                    compress=info['compress_ratio'],
-                    para=info['para_ratio'],
-                    expect_preserve=current_preserve_ratio,
-                    policy=env.action # 使用 env.action 获取当前轮的策略
-                )
-
-                # 3. 根据不同情况，使用不同颜色打印
+                agent.step(next_observation, reward, done, np.array([0], dtype=bool))
+                observation = deepcopy(next_observation)
+                
+            if done:
+                episode_reward += reward
+                log_message_template = ("#{episode}: reward={reward:.4f}, ppl={ppl:.4f}, compress_ratio={compress:.4f}, para_ratio={para:.4f}, expect_preserve_ratio={expect_preserve:.4f}\nPolicy: {policy}")
+                log_content = log_message_template.format(episode=episode, reward=episode_reward, ppl=info.get('ppl', float('nan')), compress=info['compress_ratio'], para=info['para_ratio'], expect_preserve=current_preserve_ratio, policy=env.action)
+                
                 is_best = reward > env.best_reward
                 is_nan = np.isnan(info.get('ppl', float('nan')))
 
-                if is_nan:
-                    prRed(log_content)
-                elif is_best:
-                    prGreen(log_content)
-                else:
-                    print(log_content) # 普通情况使用默认颜色
-
-                # 4. 写入文件日志 (逻辑不变)
+                if is_nan: prRed(log_content)
+                elif is_best: prGreen(log_content)
+                else: print(log_content)
+                
                 text_writer.write(log_content + '\n')
                 
-                # 5. 更新最佳奖励和模型的逻辑现在独立出来
                 if is_best:
-                    # 更新 env 内部的最佳状态
                     env.best_reward = reward
                     env.best_strategy = env.action.copy()
                     env.best_d_prime_list = env.d_prime_list.copy()
+                    # ==================== ▼▼▼ 替换/修改成这样 ▼▼▼ ====================
+                    checkpoint_path = os.path.join(output, 'checkpoint_best.pth.tar')
+                    torch.save({
+                        'episode': episode + 1,
+                        'agent_state_dict': agent.state_dict(),
+                        'best_reward': env.best_reward,
+                        'best_strategy': env.best_strategy,
+                    }, checkpoint_path)
                     
-                    # 保存模型
+                    # (可选) 如果你还想保留原来的 actor.pt, critic.pt 文件，可以保留这行
                     agent.save_model(output)
-                    
-                    # (可选) 可以在这里打印一条精简的最佳提示
-                    prGreen(f"    -> New best reward found and model saved.")
+                    prGreen(f"    -> New best reward found and comprehensive checkpoint saved.")
+                    # ======================================================================
                 
-                
-                # reset
                 observation = None
                 episode_steps = 0
                 episode_reward = 0.
                 episode += 1
 
                 if summary is not None:
-                    for k, v in summary.items():
-                        tfwriter.add_scalar(k, v, episode)
+                    for k, v in summary.items(): tfwriter.add_scalar(k, v, episode)
 
                 tfwriter.add_scalar('reward/last', reward, episode)
                 tfwriter.add_scalar('reward/best', env.best_reward, episode)
@@ -373,15 +452,16 @@ def train(num_episode, agent, env, output):
                 tfwriter.add_scalar('info/para_ratio', info['para_ratio'], episode)
                 tfwriter.add_text('info/best_policy', str(env.best_strategy), episode)
 
-                # record the preserve rate for each layer
                 for i, preserve_rate in enumerate(env.action):
                     tfwriter.add_scalar('preserve_rate/{}'.format(i), preserve_rate, episode)
 
                 text_writer.write('best reward: {}\n'.format(env.best_reward))
                 text_writer.write('best policy: {}\n'.format(env.best_strategy))
 
+        # --- 在数据收集完毕后，进行PPO更新 ---
         summary = agent.update()
 
+    # --- 训练结束后 ---
     text_writer.close()
 
 
@@ -458,6 +538,18 @@ def export_model(env, args):
     print('=> Pruning with ratios: {}'.format(ratios))
 
     env.step(ratios)
+    
+    # 如果启用了延迟下游任务评估，在剪枝+重构完成后进行评估
+    if getattr(args, 'delayed_downstream_eval', False) and getattr(args, 'enable_downstream', 'false').lower() == 'true':
+        print("\n=> Performing delayed downstream task evaluation on pruned+reconstructed model...")
+        try:
+            success = env.test_model(env.model)
+            if success:
+                print("=> Post-pruning downstream task evaluation completed successfully")
+            else:
+                print("=> Post-pruning downstream task evaluation completed with warnings")
+        except Exception as e:
+            print(f"=> WARNING: Post-pruning downstream evaluation failed: {str(e)}")
 
     return
 
@@ -538,6 +630,10 @@ if __name__ == "__main__":
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed(args.seed)
 
+    # # 零点：在任何东西加载到GPU之前
+    # torch.cuda.empty_cache()
+    # report_vram_usage("Initial State")
+    
     # === 根据 state_mode 参数决定是否使用新输入特征 ===
     # 在创建环境之前设置，确保环境创建时使用正确的参数
     if args.state_mode == 1:
@@ -562,6 +658,11 @@ if __name__ == "__main__":
                                 preserve_ratio=1. if args.job == 'export' else args.preserve_ratio, batch_size=args.data_bsize,
                                 args=args, prune_n=prune_n, prune_m=prune_m, export_model=args.job == 'export', use_new_input=args.use_new_input)
 
+    
+    # # 节点1：LLM模型加载后
+    # report_vram_usage("After LLM (env) Initialization")
+    # llm_mem = get_tensor_memory(env.model)
+    # print(f">>> Breakdown: Llama 7B model parameters occupy ~{llm_mem:.2f} MiB")
     
     if args.job == 'train':
         # === 将原有的 if args.use_new_input: 块替换为以下内容 ===
@@ -656,6 +757,13 @@ if __name__ == "__main__":
         if args.agent_path is not None:
             sd = torch.load(args.agent_path)
             agent.load_state_dict(sd)
+            
+        # # 节点2：RL Agent创建后
+        # report_vram_usage("After RL Agent Initialization")
+        # actor_mem = get_tensor_memory(agent.actor)
+        # critic_mem = get_tensor_memory(agent.critic)
+        # print(f">>> Breakdown: RL Agent parameters (Actor: {actor_mem:.2f} MiB, Critic: {critic_mem:.2f} MiB)")
+    
         train(args.train_episode, agent, env, args.output)
 
     elif args.job == 'export':

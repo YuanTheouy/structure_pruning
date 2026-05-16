@@ -120,79 +120,84 @@ from .data import get_loaders
 #     return results["results"][task]['acc']
 
 # Function to evaluate perplexity (ppl) on a specified model and tokenizer
-def eval_ppl(model, tokenizer, device=None):
-    # Set dataset
+# MODIFIED: This function can now accept an override dataset
+def eval_ppl(model, tokenizer, device=None, dataset_override=None):
+    """
+    评估模型的PPL。如果提供了dataset_override，则使用它，否则加载默认的wikitext2测试集。
+    """
     dataset = "wikitext2"
     
-    # 智能设备选择 - 使用模型实际所在的设备
     if device is None:
         device = next(model.parameters()).device
-        # print(f"=> PPL evaluation using model device: {device}")
 
-    # Print status
-    # print(f"evaluating on {dataset}")
-
-    # Get the test loader
-    _, testloader = get_loaders(
-        dataset, seed=0, seqlen=model.seqlen, tokenizer=tokenizer 
-    )
-
-    # Evaluate ppl in no grad context to avoid updating the model
-    with torch.no_grad():
-        ppl = eval_ppl_wikitext(model, testloader, 1, device)
-    return ppl 
-
-# Function to evaluate perplexity (ppl) specifically on the wikitext dataset
-def eval_ppl_wikitext(model, testenc, bs=1, device=None):
-    # Get input IDs
-    testenc = testenc.input_ids
-
-    # Calculate number of samples
-    nsamples = testenc.numel() // model.seqlen
-
-    # List to store negative log likelihoods
-    nlls = []
-    # print(f"nsamples {nsamples}")
-
-    # Loop through each batch
-    for i in range(0,nsamples,bs):
-        # if i % 50 == 0:
-            # print(f"sample {i}")
-
-        # Calculate end index
-        j = min(i+bs, nsamples)
-
-        # Prepare inputs and move to device
-        inputs = testenc[:,(i * model.seqlen):(j * model.seqlen)].to(device)
-        inputs = inputs.reshape(j-i, model.seqlen)
-
-        # Forward pass through the model
-        lm_logits = model(inputs).logits
-
-        # Shift logits and labels for next token prediction
-        shift_logits = lm_logits[:, :-1, :].contiguous()
-        shift_labels = inputs[:, 1:]
-
-        # Compute loss
-        loss_fct = nn.CrossEntropyLoss()
-        loss = loss_fct(shift_logits.reshape(-1, shift_logits.size(-1)), shift_labels.reshape(-1))
-
-        # Calculate negative log likelihood
-        neg_log_likelihood = loss.float() * model.seqlen * (j-i)
-
-        # Append to list of negative log likelihoods
-        nlls.append(neg_log_likelihood)
-
-
-        # print ("nlls",nlls)
-        sys.stdout.flush()
-
+    # This logic correctly passes the dataset (either override or default) to the core function
+    if dataset_override is not None:
+        # print(f"INFO: eval_ppl is using the provided override dataset.")
+        testenc = dataset_override # 直接使用传入的数据集
+    else:
+        print("INFO: eval_ppl is loading the default full wikitext2 test set.")
+        _, testloader = get_loaders(
+            dataset, seed=0, seqlen=model.seqlen, tokenizer=tokenizer 
+        )
+        testenc = testloader # 在您的代码中，testloader就是testenc张量
     
-    # print ('begin calcualte ppl')
-    # Compute perplexity
-    ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
+    # 调用核心函数并返回浮点数结果
+    return eval_ppl_wikitext(model, testenc, 1, device).item()
 
-    # Empty CUDA cache to save memory
+# MODIFIED: This function now correctly handles both a tensor and a list of samples
+def eval_ppl_wikitext(model, testenc, bs=1, device=None):
+    """
+    PPL评估的核心逻辑
+    """
+    # --- [关键修正] ---
+    # 我们从环境中收到的 'testenc' 现在是一个样本列表 (a LIST of samples)。
+    # 原始代码期望一个单一的张量 (a TENSOR)。
+    # 我们必须在执行任何操作之前，将这个列表转换回它所期望的单一长张量。
+    
+    if isinstance(testenc, list):
+        if not testenc: # 处理列表为空的边缘情况
+            print("WARNING: eval_ppl_wikitext received an empty list for evaluation.")
+            return torch.tensor(float('inf'))
+        # 列表中的每个 'item' 是一个元组 (input_tensor, target_tensor)
+        # 我们将所有的 input_tensor 沿着维度1拼接起来，形成一个单一的长序列
+        input_ids_list = [item[0] for item in testenc]
+        testenc_tensor = torch.cat(input_ids_list, dim=1)
+    else: 
+        # 为原始行为保留的回退路径，此时 testenc 是一个封装了张量的对象
+        testenc_tensor = testenc.input_ids
+    
+    # 确保最终的张量在正确的设备上
+    testenc_tensor = testenc_tensor.to(device)
+    # --- [修正结束] ---
+
+    # 现在，所有后续代码都必须使用 'testenc_tensor'
+    nsamples = testenc_tensor.numel() // model.seqlen
+    if nsamples == 0:
+        # print("WARNING: Not enough tokens in the evaluation set for even one sample.")
+        return torch.tensor(float('inf'))
+        
+    nlls = []
+
+    with torch.no_grad():
+        for i in range(0, nsamples, bs):
+            j = min(i + bs, nsamples)
+            # 使用我们处理过的 testenc_tensor
+            inputs = testenc_tensor[:, (i * model.seqlen):(j * model.seqlen)]
+            inputs = inputs.reshape(j - i, model.seqlen)
+
+            lm_logits = model(inputs).logits
+            
+            shift_logits = lm_logits[:, :-1, :].contiguous()
+            shift_labels = inputs[:, 1:]
+
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+            neg_log_likelihood = loss.float() * model.seqlen * (j - i)
+            nlls.append(neg_log_likelihood)
+
+        ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
+
     torch.cuda.empty_cache()
 
-    return ppl.item()
+    return ppl

@@ -47,17 +47,29 @@ def get_ffn2(model, index):
 
 def get_gate(model, index):
     layer = get_layers(model)[index]
-    proj = layer.mlp.gate_proj
+    # 检查模型类名，动态选择路径
+    if "Qwen" in model.__class__.__name__:
+        proj = layer.mlp.gate_proj # Qwen的路径
+    else:
+        proj = layer.mlp.gate_proj # Llama的路径 - 修正：也在mlp子模块中
     return proj
 
 def get_up(model, index):
     layer = get_layers(model)[index]
-    proj = layer.mlp.up_proj
+    # 检查模型类名，动态选择路径
+    if "Qwen" in model.__class__.__name__:
+        proj = layer.mlp.up_proj # Qwen的路径
+    else:
+        proj = layer.mlp.up_proj # Llama的路径 - 修正：也在mlp子模块中
     return proj
 
 def get_down(model, index):
     layer = get_layers(model)[index]
-    proj = layer.mlp.down_proj
+    # 检查模型类名，动态选择路径
+    if "Qwen" in model.__class__.__name__:
+        proj = layer.mlp.down_proj # Qwen的路径
+    else:
+        proj = layer.mlp.down_proj # Llama的路径 - 修正：也在mlp子模块中
     return proj
 
 def get_mha_ln(model, index):

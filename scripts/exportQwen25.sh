@@ -1,31 +1,41 @@
 #!/bin/bash
 # =================================================================================
-#    AMC-LLM 模型导出脚本 - Llama-2-7B 剪枝模型导出 (增强版)
+#    AMC-LLM 模型导出脚本 - Qwen2.5-7B 剪枝模型导出 (增强版)
 # =================================================================================
 #
 #   用法:
-#       1. 基础用法: ./scripts/exportL770.sh
-#       2. 指定保留比例: ./scripts/exportL770.sh --preserve-ratio 0.8
-#       3. 启用重构: ./scripts/exportL770.sh --enable-recon
-#       4. 指定导出路径: ./scripts/exportL770.sh --export-path ./my_model.pth.tar
-#       5. 指定数据集: ./scripts/exportL770.sh --dataset wikitext2
-#       6. 自定义剪枝比例: ./scripts/exportL770.sh --ratios "1.0,0.5,0.3,..."
-#       7. 指定GPU: ./scripts/exportL770.sh --gpu-id 0,1,2,3
-#       8. 组合使用: ./scripts/exportL770.sh --gpu-id 1,3 --enable-recon --preserve-ratio 0.8
+#       该脚本用于导出经过剪枝的 Qwen2.5-7B 模型。
 #
-#   脚本将导出剪枝后的模型到指定路径。
+#   核心功能:
+#       1. 支持通过 --ratios 参数传入自定义剪枝比例。
+#       2. 支持在脚本内预定义多套剪枝比例，通过 --preserve-ratio 方便地切换，
+#          非常适合开发和调试。
+#
+#   示例:
+#       # 使用脚本内为 0.7 预设的剪枝比例
+#       ./exportQwen25.sh --preserve-ratio 0.7 --enable-recon
+#
+#       # 临时覆盖，使用命令行传入的剪枝比例
+#       ./exportQwen25.sh --ratios "0.9,0.8,..." --enable-recon
+#
+#       # 指定使用GPU 0和1进行重建
+#       ./exportQwen25.sh --gpu-id 0,1 --enable-recon
+#
+#       # 组合使用：指定GPU、启用重构和下游评估
+#       ./exportQwen25.sh --gpu-id 1,2,3 --enable-recon --enable-downstream
 #
 # =================================================================================
 
 # --- 1. 参数解析 ---
-PRESERVE_RATIO=0.7
+PRESERVE_RATIO=0.7 # 默认保留比例，用于查找预设或命名
 ENABLE_RECON=false
 ENABLE_DOWNSTREAM=false
 DATASET_NAME="wikitext2"
 EXPORT_PATH=""
-RATIOS=""
+RATIOS="" # 优先使用命令行传入的比例
 GPU_ID=""  # 新增：GPU ID参数
 SHOW_HELP=false
+USER_PROVIDED_RATIOS=false # 标记是否由用户在命令行指定
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,6 +61,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ratios)
             RATIOS="$2"
+            USER_PROVIDED_RATIOS=true
             shift 2
             ;;
         --gpu-id)
@@ -62,7 +73,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            echo "未知参数: $1"
+            echo "错误: 未知参数: $1"
             echo "使用 --help 查看用法"
             exit 1
             ;;
@@ -73,50 +84,48 @@ if [ "$SHOW_HELP" = true ]; then
     echo "用法: $0 [选项]"
     echo ""
     echo "选项:"
-    echo "  --preserve-ratio R    指定保留比例 (默认: 0.7)"
+    echo "  --preserve-ratio R    指定保留比例 (默认: 0.7)，用于查找预设或命名"
+    echo "  --ratios RATIOS       (可选) 指定自定义剪枝比例，优先级高于内部预设"
     echo "  --enable-recon        启用重构模式 (默认: 禁用)"
     echo "  --enable-downstream   启用下游任务评估 (默认: 禁用)"
-    echo "  --dataset NAME        指定数据集名称 (默认: wikitext2)"
+    echo "  --dataset NAME        指定用于PPL评估的数据集 (默认: wikitext2)"
     echo "  --export-path PATH    指定导出路径 (默认: 自动生成)"
-    echo "  --ratios RATIOS       指定自定义剪枝比例 (逗号分隔)"
     echo "  --gpu-id IDS          指定使用的GPU ID (如: 0 或 0,1,2,3，默认: 自动选择)"
     echo "  --help, -h            显示此帮助信息"
-    echo ""
-    echo "示例:"
-    echo "  $0                                    # 使用默认设置"
-    echo "  $0 --preserve-ratio 0.8               # 保留80%参数"
-    echo "  $0 --enable-recon                     # 启用重构模式"
-    echo "  $0 --enable-downstream                # 启用下游任务评估"
-    echo "  $0 --dataset piqa                     # 使用PIQA数据集"
-    echo "  $0 --export-path ./my_model.pth.tar   # 指定导出路径"
-    echo "  $0 --gpu-id 0                         # 仅使用GPU 0"
-    echo "  $0 --gpu-id 0,1,2,3                   # 使用GPU 0,1,2,3"
-    echo "  $0 --gpu-id 1,3 --enable-recon        # 使用GPU 1,3并启用重构"
     exit 0
 fi
 
-# --- 2. 预定义剪枝比例配置 ---
-# 根据保留比例选择对应的剪枝配置 (针对Llama-2-7B优化)
+# --- 2. 预定义剪枝比例配置 (调试与开发用) ---
+# !!! 警告: 以下剪枝比例是为 Qwen2.5-7B 模型结构设计的占位符 !!!
+# !!! 它们的数值是随机生成的，仅用于演示和方便调试，*绝不能*用于实际的模型剪枝 !!!
+# !!! 在实际使用前，您必须用通过搜索得到的、针对您的任务优化的真实比例替换它们 !!!
+#
+# Qwen2.5-7B Instruct 有 40 个 Transformer 层。
+# 假设剪枝策略针对每层的 gate_proj 和 down_proj (FFN部分)，总计 40*2=80 个可剪枝参数。
+# 因此，下面的字符串包含 80 个逗号分隔的数值。
 declare -A ratio_configs
-# Llama-2-7B 32层模型的剪枝配置 (64个参数: 32层 * 2个部分(attention+ffn))
-ratio_configs[0.7]="1.0, 0.10001816860465117, 1.0, 0.37872456395348836, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.10001816860465117, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.9151526162790697, 1.0, 0.27770712209302323, 1.0, 0.17977834302325582, 1.0, 0.5339752906976745, 0.09375, 0.20648619186046513, 1.0, 0.8237645348837209, 1.0, 0.33021438953488375, 1.0, 0.8833575581395349, 1.0, 0.9402252906976745, 1.0, 0.8315770348837209, 0.21875, 0.3738190406976744, 0.09375, 0.10001816860465117, 1.0, 0.1321765988372093, 1.0, 0.9465843023255814, 0.09375, 0.3223110465116279, 1.0, 0.5223473837209303, 1.0, 1.0, 1.0, 0.10001816860465117, 1.0, 0.4733829941860465, 1.0, 1.0, 0.09375, 0.9214207848837209, 1.0, 0.42214752906976744"
+ratio_configs[0.7]="1.0, 0.504222972972973, 1.0, 0.2282516891891892, 1.0, 1.0, 1.0, 0.33292863175675674, 1.0, 0.5825063344594594, 1.0, 0.5981313344594594, 1.0, 0.37811444256756754, 1.0, 1.0, 1.0, 1.0, 1.0, 0.32849451013513514, 1.0, 0.44256756756756754, 0.4642857142857143, 0.6009818412162162, 1.0, 1.0, 1.0, 1.0, 0.9285714285714286, 1.0, 1.0, 0.6026182432432432, 1.0, 0.4096283783783784, 1.0, 0.7765519425675675, 0.5357142857142857, 0.23965371621621623, 1.0, 0.4552364864864865, 0.9285714285714286, 0.8490815033783784, 1.0, 0.5503061655405406, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5763830236486487, 1.0, 0.36776815878378377, 1.0, 0.7350612331081081, 1.0, 0.9953019425675675"
+
 
 # --- 3. 固定参数配置 ---
-MODEL_PATH="/home/theo/data/yx_repository/01_Models/llama-2-7b-hf"
-MODEL_NAME="llama-2-7b-hf"
+# !!! 请根据您的环境修改以下路径 !!!
+# MODEL_PATH="/home/theo/data/yx_repository/01_Models/Qwen2.5-7B" # 修改为您的 Qwen2.5-7B 模型路径
+MODEL_PATH="/home/yx/yx_repository/01_Models/Qwen2.5-7B" # 修改为您的 Qwen2.5-7B 模型路径
+MODEL_NAME="qwen2.5-7b" # 模型标识符
 PRUNE_TYPE="para"
-LBOUND=0.15
+LBOUND=0.1
 RBOUND=1.0
 N_SAMPLES=64
 RECON_SAMPLE=32
-SEED=2024
+SEED=2025
 
 # --- 4. 自动选择剪枝比例配置 ---
-if [ -z "$RATIOS" ]; then
+if [ "$USER_PROVIDED_RATIOS" = false ]; then
     RATIOS=${ratio_configs[$PRESERVE_RATIO]}
     if [ -z "$RATIOS" ]; then
-        echo "警告: 没有为保留比例 ${PRESERVE_RATIO} 预定义剪枝配置，将使用0.7的配置"
-        RATIOS=${ratio_configs[0.7]}
+        echo "错误: 在脚本中没有为保留比例 ${PRESERVE_RATIO} 定义预设剪枝配置。"
+        echo "请在 'ratio_configs' 中添加该配置，或使用 --ratios 参数直接提供。"
+        exit 1
     fi
 fi
 
@@ -128,7 +137,7 @@ if [ -z "$EXPORT_PATH" ]; then
     if [ "$ENABLE_RECON" = true ]; then
         RECON_SUFFIX="_recon"
     fi
-    EXPORT_PATH="./checkpoints/llama2_7b_${RATIO_SUFFIX}_${DATASET_NAME}${RECON_SUFFIX}_${TIMESTAMP}_export.pth.tar"
+    EXPORT_PATH="./checkpoints/${MODEL_NAME}_${RATIO_SUFFIX}_${DATASET_NAME}${RECON_SUFFIX}_${TIMESTAMP}_export.pth.tar"
 fi
 
 # --- 6. 环境与执行器配置 ---
@@ -138,6 +147,7 @@ if ! command -v $PYTHON_EXECUTABLE &> /dev/null; then
     echo "错误: 找不到 Python 解释器。请激活 Conda 环境或检查路径。"
     exit 1
 fi
+export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "${CONDA_PREFIX}/lib" | tr '\n' ':' | sed 's/:$//')
 
 # --- 6.1. GPU设置 ---
 if [ -n "$GPU_ID" ]; then
@@ -161,51 +171,36 @@ export CUDA_LAUNCH_BLOCKING=0
 # 强制垃圾回收和内存清理
 export PYTHONHASHSEED=0
 
-# --- 6.3. CUDA库路径配置 ---
-# Force use of CUDA 12 libraries and exclude all other CUDA library paths
-export LD_LIBRARY_PATH=/usr/local/cuda-12.9/targets/x86_64-linux/lib:/usr/local/cuda/lib64
-# Remove conda env lib path that might have conflicting CUDA libraries  
-export LD_LIBRARY_PATH=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -v "/home/theo/data/anaconda3/envs/amc_LLM/lib" | tr '\n' ':' | sed 's/:$//')
-# Set CUPY to use specific CUDA installation
-export CUDA_PATH=/usr/local/cuda-12.9
-
-# --- 6.4. 离线模式配置 ---
-export HF_EVALUATE_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-
-# --- 7. 重构参数配置 ---
+# --- 7. 重构与下游任务参数配置 ---
+RECON_FLAG=""
+RECON_STATUS="禁用 (速度更快，精度稍低)"
 if [ "$ENABLE_RECON" = true ]; then
     RECON_FLAG="--recon"
     RECON_STATUS="启用 (精度更高，速度较慢)"
-else
-    RECON_FLAG=""
-    RECON_STATUS="禁用 (速度更快，精度稍低)"
 fi
 
-# --- 8. 下游任务评估参数配置 ---
+DOWNSTREAM_FLAG="--enable_downstream=false"
+DOWNSTREAM_STATUS="禁用 (仅评估PPL，速度较快)"
+DELAYED_EVAL_FLAG=""
 if [ "$ENABLE_DOWNSTREAM" = true ]; then
     DOWNSTREAM_FLAG="--enable_downstream=true"
     DOWNSTREAM_STATUS="启用 (评估下游任务性能，耗时较长)"
-else
-    DOWNSTREAM_FLAG="--enable_downstream=false"
-    DOWNSTREAM_STATUS="禁用 (仅评估PPL，速度较快)"
+    DELAYED_EVAL_FLAG="--delayed_downstream_eval"
 fi
 
-# --- 9. 确保导出目录存在 ---
+# --- 8. 确保导出目录存在 ---
 mkdir -p "$(dirname "$EXPORT_PATH")"
 
-# --- 10. 显示配置信息 ---
+# --- 9. 显示配置信息 ---
 echo "=================================================================="
-echo "   AMC-LLM 模型导出 - Llama-2-7B 剪枝模型"
+echo "   AMC-LLM 模型导出 - Qwen2.5-7B 剪枝模型"
 echo "=================================================================="
 echo "    导出配置:"
 echo "     - 模型路径:         ${MODEL_PATH}"
-echo "     - 数据集:           ${DATASET_NAME}"
-echo "     - 保留比例:         ${PRESERVE_RATIO}"
-echo "     - 剪枝类型:         ${PRUNE_TYPE}"
+echo "     - 数据集 (PPL):     ${DATASET_NAME}"
+echo "     - 保留比例 (命名):  ${PRESERVE_RATIO}"
 echo "     - 重构模式:         ${RECON_STATUS}"
 echo "     - 下游任务评估:     ${DOWNSTREAM_STATUS}"
-echo "     - 随机种子:         ${SEED}"
 echo ""
 echo "    GPU配置:"
 if [ "$GPU_ID" = "auto" ]; then
@@ -215,19 +210,18 @@ echo "     - GPU使用:          ${GPU_ID} (${GPU_COUNT}个GPU)"
 echo "     - 主GPU:            ${MAIN_GPU_ID}"
 fi
 echo ""
-echo "    技术参数:"
-echo "     - 样本数量:         ${N_SAMPLES}"
-echo "     - 重构样本:         ${RECON_SAMPLE}"
-echo "     - 下边界:           ${LBOUND}"
-echo "     - 上边界:           ${RBOUND}"
-echo ""
-echo "    输出路径:"
-echo "     - 导出文件:         ${EXPORT_PATH}"
+echo "    剪枝比例来源:"
+if [ "$USER_PROVIDED_RATIOS" = true ]; then
+    echo "     - 由 --ratios 命令行参数提供"
+else
+    echo "     - 从脚本内预设 'ratio_configs[${PRESERVE_RATIO}]' 加载"
+    echo "     - (警告: 请确认预设值是否为真实有效比例，而非占位符)"
+fi
 echo "------------------------------------------------------------------"
-echo "  开始导出模型... "
+echo "  准备执行导出命令... "
 echo ""
 
-# --- 11. 执行导出命令 ---
+# --- 10. 执行导出命令 ---
 # 在开始前显示当前GPU状态
 echo "=> 当前GPU状态检查:"
 if command -v nvidia-smi &> /dev/null; then
@@ -256,6 +250,7 @@ ${PYTHON_EXECUTABLE} -u amc_searchPPO.py \
     --state_mode=0 \
     ${RECON_FLAG} \
     ${DOWNSTREAM_FLAG} \
+    ${DELAYED_EVAL_FLAG} \
     --lbound=${LBOUND} \
     --rbound=${RBOUND} \
     --n_samples=${N_SAMPLES} \
@@ -265,21 +260,18 @@ ${PYTHON_EXECUTABLE} -u amc_searchPPO.py \
     --seed=${SEED} \
     --export_path="${EXPORT_PATH}"
 
-# --- 12. 导出完成提示 ---
+# --- 11. 导出完成提示 ---
 EXPORT_EXIT_CODE=$?
 echo ""
 echo "=================================================================="
 if [ ${EXPORT_EXIT_CODE} -eq 0 ]; then
-    echo "Llama-2-7B 模型导出完成！"
+    echo "模型导出完成！"
     echo "导出文件位于: ${EXPORT_PATH}"
-    echo "保留比例: ${PRESERVE_RATIO} | 重构模式: $([ "$ENABLE_RECON" = true ] && echo "已启用" || echo "已禁用") | 下游任务评估: $([ "$ENABLE_DOWNSTREAM" = true ] && echo "已启用" || echo "已禁用")"
-    
-    # 显示文件大小信息
     if [ -f "${EXPORT_PATH}" ]; then
         FILE_SIZE=$(du -h "${EXPORT_PATH}" | cut -f1)
         echo "文件大小: ${FILE_SIZE}"
     fi
 else
-    echo "Llama-2-7B 模型导出失败 (退出码: ${EXPORT_EXIT_CODE})"
+    echo "模型导出失败 (退出码: ${EXPORT_EXIT_CODE})"
 fi
 echo "=================================================================="

@@ -7,12 +7,12 @@ class Ridge_Regression:
     def __init__(self, X, y, alpha, fit_intercept=False, device='cuda'):
         # Keep data on GPU using PyTorch instead of CuPy
         if hasattr(X, 'cpu'):
-            self.X = X.float()
+            self.X = X.float().to(device)  # 确保张量在正确设备上
         else:
             self.X = torch.tensor(X, dtype=torch.float32, device=device)
             
         if hasattr(y, 'cpu'):
-            self.y = y.float()
+            self.y = y.float().to(device)  # 确保张量在正确设备上
         else:
             self.y = torch.tensor(y, dtype=torch.float32, device=device)
             

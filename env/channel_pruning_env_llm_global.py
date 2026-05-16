@@ -22,6 +22,54 @@ from accelerate.utils import get_balanced_memory
 # from lib.lm_eval.tasks import get_task_dict, ALL_TASKS
 # from lib.lm_eval.utils import pattern_match
 # from lib.lm_eval.models import get_model
+# ================== 新的、简化的调试工具 ==================
+class NanInfDetectedError(Exception):
+    """自定义异常，用于被钩子捕捉到NaN/Inf时抛出"""
+    def __init__(self, message, module_name, module_full_name):
+        super().__init__(message)
+        self.module_name = module_name
+        self.module_full_name = module_full_name
+
+def nan_checker_hook_with_exception(module, a_input, a_output):
+    """
+    一个前向钩子函数，在检测到NaN/Inf时直接抛出我们自定义的异常。
+    """
+    # a_output 可能是 tensor, tuple, 或其他类型
+    outputs_to_check = []
+    if isinstance(a_output, torch.Tensor):
+        outputs_to_check.append(a_output)
+    elif isinstance(a_output, (list, tuple)):
+        for item in a_output:
+            if isinstance(item, torch.Tensor):
+                outputs_to_check.append(item)
+
+    for tensor in outputs_to_check:
+        if torch.isnan(tensor).any() or torch.isinf(tensor).any():
+            # 获取模块的完整名称 (例如 'model.layers.15.self_attn.o_proj')
+            module_full_name = ""
+            for name, mod in module.named_modules():
+                if mod is module:
+                    module_full_name = name
+                    break # 通常内层循环一次就够了
+
+            raise NanInfDetectedError(
+                f"NaN or Inf detected in the output of module!",
+                module_name=module.__class__.__name__,
+                module_full_name=module_full_name # 传递完整的模块名
+            )
+# ==========================================================
+
+def nan_checker_hook(module, a_input, a_output):
+    """
+    一个前向钩子函数，用于检查模块输出中是否存在NaN/Inf。
+    """
+    if not isinstance(a_output, torch.Tensor):
+        # 有些模块可能输出tuple等，我们只关心Tensor
+        return
+    if torch.isnan(a_output).any() or torch.isinf(a_output).any():
+        print(f"!!! NaN or Inf detected in the output of module: {module.__class__.__name__} !!!")
+        # 您可以在这里设置断点进行调试
+        # import pdb; pdb.set_trace()
 
 # 新版本lm-eval-harness导入 - 智能条件化导入
 LMEVAL_AVAILABLE = False
@@ -161,31 +209,6 @@ import os
 sys.setrecursionlimit(10000)
 
 os.environ['TOKENIZERS_PARALLELISM']="false"
-# 注释掉离线模式设置以允许下游任务评估下载数据集
-# os.environ['HF_DATASETS_OFFLINE']="1"
-# os.environ['TRANSFORMERS_OFFLINE']="1"
-
-# class Ridge:
-#     def __init__(self, alpha=1, fit_intercept=False):
-#         self.weight = None
-#         self.lambda_ = alpha
-#         self.fit_bias = fit_intercept
-        
-#     def fit(self, X, y):
-#         torch.cuda.empty_cache()
-#         if self.fit_bias:
-#             X = cp.c_[cp.ones(X.shape[0]), X]
-#         A = self.lambda_ * cp.eye(X.shape[1])
-#         X = cp.asarray(X.cpu().numpy())
-#         y = cp.asarray(y.cpu().numpy())
-#         mat = X.T @ X + A
-#         pseudo_inverse = cp.linalg.inv(mat) @ X.T
-#         self.coef_ = pseudo_inverse @ y
-        
-#     def predict(self, X):
-#         if self.fit_bias:
-#             X = cp.c_[cp.ones(X.shape[0]), X]
-#         return cp.matmul(X, self.weight)
 
 
 class ChannelPruningEnv:
@@ -195,20 +218,17 @@ class ChannelPruningEnv:
     def __init__(self, model, data, preserve_ratio, args, n_data_worker=4,
                  batch_size=256, export_model=False, use_new_input=False):
 
+        # --- 步骤 1: 优先初始化所有基础依赖项 ---
         self.args = args
         self.model_path = args.model
-        self._get_model()
-
-        # 简单设备分配 - 遵循CUDA_VISIBLE_DEVICES设置
-        if torch.cuda.is_available():
-            # 获取模型实际所在的设备
-            model_device = next(self.model.parameters()).device
-            self.device = model_device
-            print(f"=> Model device: {self.device}")
-        else:
-            self.device = torch.device("cpu")
-            print(f"=> Using CPU device (CUDA not available)")
-            
+        
+        # _get_model会初始化 self.model 和 self.tokenizer
+        self._get_model() 
+        
+        # !! 关键修正 !!: 立即从传入的参数中赋值 self.dataset
+        # 在您的 amc_searchPPO.py 中，第二个参数'data'被传入了args.dataset_name
+        self.dataset = data
+        
         self.dataset = args.dataset_name
         self.n_data_worker = n_data_worker
         self.batch_size = batch_size
@@ -234,6 +254,91 @@ class ChannelPruningEnv:
 
         self.export_model = export_model
         self.use_new_input = use_new_input
+        
+        # # --- 步骤 2: 现在所有依赖项都已具备，可以安全地创建评估子集 ---
+        # print("=> Loading validation set to create reward evaluation subsets...")
+        
+        # # 这个函数现在可以安全地使用 self.dataset, self.model.seqlen 等属性
+        # _, val_tensor = get_loaders(
+        #     self.dataset,
+        #     nsamples=0, # nsamples=0 表示我们只需要测试集
+        #     seed=self.args.seed,
+        #     seqlen=self.model.seqlen,
+        #     tokenizer=self.tokenizer
+        # )
+        
+        # # 将测试集张量切分成样本列表
+        # val_tensor_flat = val_tensor.input_ids.view(-1)
+        # num_samples_total = val_tensor_flat.size(0) // self.model.seqlen
+        # self.full_val_samples = [
+        #     (val_tensor_flat[i*self.model.seqlen:(i+1)*self.model.seqlen].unsqueeze(0), None) 
+        #     for i in range(num_samples_total)
+        # ]
+        # print(f"=> Successfully loaded and chunked {len(self.full_val_samples)} validation samples.")
+        
+        # random.shuffle(self.full_val_samples)
+        
+        
+        # # 从args中读取比例
+        # reward_subset_size_small = getattr(self.args, 'reward_subset_size_small', 0.05)
+        # reward_subset_size_large = getattr(self.args, 'reward_subset_size_large', 0.2)
+
+        # self.small_subset_size = int(len(self.full_val_samples) * reward_subset_size_small)
+        # self.large_subset_size = int(len(self.full_val_samples) * reward_subset_size_large)
+        
+        # self.current_eval_mode = 'small' # 默认从 'small' 模式开始
+        # self.active_reward_eval_set = None
+
+        # self.resample_reward_eval_set() # Call the new method to create the first batch
+        # print(f"Defaulting to SMALL reward evaluation set with {len(self.active_reward_eval_set)} samples.")
+        # # --- [代码结束] ---
+        
+        # +++ [新增] 动态数据集初始化逻辑 +++
+        print("=> Loading full validation set for dynamic sampling...")
+        _, val_tensor = get_loaders(
+            self.dataset,
+            nsamples=0, # nsamples=0 表示加载完整的测试集
+            seed=self.args.seed,
+            seqlen=self.model.seqlen,
+            tokenizer=self.tokenizer
+        )
+        val_tensor_flat = val_tensor.input_ids.view(-1)
+        num_samples_total = val_tensor_flat.size(0) // self.model.seqlen
+        self.full_val_samples = [
+            (val_tensor_flat[i*self.model.seqlen:(i+1)*self.model.seqlen].unsqueeze(0), None) 
+            for i in range(num_samples_total)
+        ]
+        print(f"=> Successfully loaded and chunked {len(self.full_val_samples)} validation samples.")
+        
+        # 初始化当前数据集比例
+        self.current_dataset_ratio = 1.0 
+
+        if self.args.use_dataset_growth:
+            # 模式1: 启用数据集渐进增长
+            print(f"=> Dataset Growth ENABLED. Initializing with ratio: {self.args.dataset_initial_ratio}")
+            self.current_dataset_ratio = self.args.dataset_initial_ratio
+            # 立即根据初始比例更新一次评估集
+            self.resample_reward_eval_set() 
+        else:
+            # 模式2: 禁用数据集渐进增长，始终使用全集
+            print("=> Dataset Growth DISABLED. Using FULL validation set for all evaluations.")
+            self.active_reward_eval_set = self.full_val_samples
+
+        print(f"=> Initial active evaluation set contains {len(self.active_reward_eval_set)} samples.")
+        # +++ [新增结束] +++
+        
+
+        # 简单设备分配 - 遵循CUDA_VISIBLE_DEVICES设置
+        if torch.cuda.is_available():
+            # 获取模型实际所在的设备
+            model_device = next(self.model.parameters()).device
+            self.device = model_device
+            print(f"=> Model device: {self.device}")
+        else:
+            self.device = torch.device("cpu")
+            print(f"=> Using CPU device (CUDA not available)")
+            
+        
 
         # 根据状态模式设置状态维度
         if self.use_new_input:
@@ -253,7 +358,14 @@ class ChannelPruningEnv:
 
         # build reward
         self.reset()  # restore weight
-        self.org_ppl = self._validate(self.model)  # 计算真实的原始模型PPL
+        
+        # 如果启用了延迟下游任务评估，在初始化时只计算PPL
+        if getattr(self.args, 'delayed_downstream_eval', False):
+            print("=> Initial validation: PPL-only (downstream evaluation delayed)")
+            self.org_ppl = self._validate_ppl_only(self.model)
+        else:
+            self.org_ppl = self._validate(self.model)  # 计算真实的原始模型PPL
+        
         print('=> original ppl: {:.3f}'.format(self.org_ppl))
         self.org_para = sum(self.param_list)
         print('=> Params:')
@@ -301,6 +413,38 @@ class ChannelPruningEnv:
         print("=> Original weights stored.")
         # --------------------------------------------------
 
+    def update_dataset_ratio(self, new_ratio):
+        """
+        由外部训练循环调用，以更新用于奖励评估的数据集比例。
+        """
+        # 确保比例在0和1之间
+        new_ratio = max(0.0, min(new_ratio, 1.0))
+        
+        if self.current_dataset_ratio != new_ratio:
+            self.current_dataset_ratio = new_ratio
+            # 比例变化后，需要重新采样评估集
+            self.resample_reward_eval_set()
+            # (可选) 日志输出，用于调试
+            # print(f"=> Dataset ratio updated to: {self.current_dataset_ratio:.3f}, new eval set size: {len(self.active_reward_eval_set)}")
+            
+    # +++ [新增] 新的、基于比例的 resample_reward_eval_set 方法 +++
+    def resample_reward_eval_set(self):
+        """
+        从完整的验证集中，根据当前的 self.current_dataset_ratio 比例，
+        重新随机抽取样本，更新当前激活的评估子集。
+        """
+        # 1. 每次都随机打乱全集，确保抽样的随机性
+        random.shuffle(self.full_val_samples)
+        
+        # 2. 根据当前比例计算需要的样本数量
+        num_samples_to_take = int(len(self.full_val_samples) * self.current_dataset_ratio)
+        
+        # 3. 确保至少有1个样本，防止比例过小时取0
+        num_samples_to_take = max(1, num_samples_to_take)
+        
+        # 4. 从打乱后的全集中切片，得到新的激活评估集
+        self.active_reward_eval_set = self.full_val_samples[:num_samples_to_take]
+
     def update_target_ratio(self, new_preserve_ratio):
         """
         允许外部调用以更新环境的全局目标保留率。
@@ -324,6 +468,8 @@ class ChannelPruningEnv:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
         elif "llama" in self.args.model:
             self.tokenizer = LlamaTokenizer.from_pretrained(self.model_path, use_fast=False)
+        elif "qwen" or "Qwen" in self.args.model: # 为 Qwen 添加分支
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
 
 
     def _get_model_local(self, verbose=True):
@@ -342,16 +488,21 @@ class ChannelPruningEnv:
             if verbose:
                 print("=> Using CPU (no GPU available)")
             
+        # ==================== 核心修改 1: 使用 bfloat16 ====================
+        print("=> [STABILITY] Loading model with torch_dtype=torch.bfloat16")
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16, # <--- 修改这里
+            # torch_dtype=torch.float16,
             cache_dir=self.args.cache_dir,
             low_cpu_mem_usage=True,
             device_map=device_map,
         )
+        # ===================================================================
+        
         
         # 根据模型类型动态设置序列长度
-        if "OPT" in self.model.__class__.__name__:
+        if "opt" in self.model.config.model_type.lower():
             # OPT模型使用2048序列长度
             self.model.seqlen = 2048
             layers = self.model.model.decoder.layers
@@ -375,7 +526,7 @@ class ChannelPruningEnv:
     def step(self, action):
         self.action = self._action_wall(action)
         # with torch.no_grad():
-        #     if "OPT" in self.model.__class__.__name__:
+        #     if "opt" in self.model.config.model_type.lower():
         #         self.inps, self.outs, self.attention_mask, self.position_ids = self.prepare_calibration_input_opt()
         #     else:
         #         self.inps, self.outs, self.attention_mask, self.position_ids = self.prepare_calibration_input()
@@ -406,7 +557,7 @@ class ChannelPruningEnv:
                         torch.cuda.empty_cache()
                         for j in range(len(self.recon_inps)):
                             with torch.no_grad():
-                                if "OPT" in self.model.__class__.__name__:
+                                if "opt" in self.model.config.model_type.lower():
                                     self.recon_outs[j] = layer[i](self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
                                 else:
                                     self.recon_outs[j] = layer[i](self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask,
@@ -427,6 +578,17 @@ class ChannelPruningEnv:
             pbar.update(1)
         
         pbar.close()
+        
+        
+        # --- START: CRITICAL FIX ---
+        # 经过剪枝操作，模型各层的设备状态可能已被打乱。
+        # 在进行验证（完整前向传播）之前，我们必须调用dispatch_model，
+        # 让accelerate根据其内部的hf_device_map重新校准和分配所有层，
+        # 确保模型恢复到设备一致的状态。
+        print("=> Re-dispatching model to correct device map after pruning...")
+        self.model = dispatch_model(self.model, device_map=self.model.hf_device_map)
+        # --- END: CRITICAL FIX ---
+        
         total_time = time.time() - start_time
         # print(f"=> Pruning completed in {total_time:.1f}s (avg: {total_time/total_steps:.1f}s/step)")
 
@@ -437,6 +599,36 @@ class ChannelPruningEnv:
         current_para = self._cur_para(self.strategy)
         para_ratio = current_para * 1. / self.org_para
 
+        
+        # ==================== 核心修改 2: 在step函数中实现调试逻辑 ====================
+        hooks = []
+        try:
+            # 验证前，给模型的所有相关模块挂上我们的“巡查员”——钩子
+            # print("==> [DEBUG] Registering hooks to detect NaN during validation...")
+            for name, module in self.model.named_modules():
+                # 我们关心所有可能出现数值问题的层
+                if isinstance(module, (torch.nn.Linear, torch.nn.LayerNorm)) or 'LlamaRMSNorm' in module.__class__.__name__:
+                    hooks.append(module.register_forward_hook(nan_checker_hook_with_exception))
+            
+            # 执行常规的PPL验证（eval_ppl内部会使用 torch.no_grad()，内存开销小）
+            ppl = self._validate(self.model)
+
+        except NanInfDetectedError as e:
+            # 如果任何一层产生NaN，我们的自定义异常会被捕捉到
+            print("\n" + "="*70)
+            print(f"  [!!!] CRITICAL FAILURE: {e}")
+            print(f"  [!!!] First module to produce NaN/Inf was: <{e.module_name}>")
+            print(f"  [!!!] Full Module Path: {e.module_full_name}") # 打印完整的模块路径
+            print("="*70 + "\n")
+            ppl = float('nan') # 将PPL设为nan，以便RL知道这是个失败的尝试
+        
+        finally:
+            # 无论如何，最后都要把所有钩子都移除，清理现场
+            for handle in hooks:
+                handle.remove()
+            # print("==> [DEBUG] All hooks removed.")
+        # =========================================================================
+        
         # print("=> Validating pruned model (PPL + Downstream tasks)...")
         ppl = self._validate(self.model)
         if ppl is not None and np.isfinite(ppl) and ppl > 0:
@@ -467,16 +659,16 @@ class ChannelPruningEnv:
             # 旧的逻辑，保持不变
             obs = np.array(self.preserve_ratio, dtype=np.float32)
 
-        if reward > self.best_reward:
-            self.best_reward = reward
-            self.best_strategy = self.action.copy()
-            self.best_d_prime_list = self.d_prime_list.copy()
-            prGreen(
-                'New best reward: {:.4f}, ppl: {:.4f}, compress: {:.4f}, para: {:.4f}'.format(self.best_reward, ppl,
-                                                                                              compress_ratio, para_ratio))
-            prGreen('New best policy: {}'.format(self.best_strategy))
-            prGreen('New best d primes: {}'.format(self.best_d_prime_list))
-            torch.save(self.model.state_dict(), self.export_path)
+        # if reward > self.best_reward:
+        #     self.best_reward = reward
+        #     self.best_strategy = self.action.copy()
+        #     self.best_d_prime_list = self.d_prime_list.copy()
+        #     prGreen(
+        #         'New best reward: {:.4f}, ppl: {:.4f}, compress: {:.4f}, para: {:.4f}'.format(self.best_reward, ppl,
+        #                                                                                       compress_ratio, para_ratio))
+        #     prGreen('New best policy: {}'.format(self.best_strategy))
+        #     prGreen('New best d primes: {}'.format(self.best_d_prime_list))
+        #     torch.save(self.model.state_dict(), self.export_path)
 
         done = True
 
@@ -582,7 +774,24 @@ class ChannelPruningEnv:
         return scaling_mat
 
     def prune(self, preserve_ratio, idx, head, global_idx):
-
+        # # --- 在这里加入下面这行打印语句 ---
+        # print("\n\n--->>> 正在执行最新版本的 PRUNE 方法！ <<<---\n\n")
+        # # ------------------------------------
+        
+        # # ==================== 最终探员：开始现场勘查 ====================
+        # print(f"--- [DEBUG] 进入prune方法: layer_idx={idx}, is_head={head} ---")
+        # try:
+        #     print(f"--- [DEBUG] self.model.__class__.__name__ is: {self.model.__class__.__name__}")
+        #     print(f"--- [DEBUG] self.model.config.model_type is: {self.model.config.model_type}")
+        #     model_type_str_lower = self.model.config.model_type.lower()
+        #     print(f"--- [DEBUG] model_type_str_lower is: '{model_type_str_lower}'")
+        #     check_result = "opt" in model_type_str_lower
+        #     print(f"--- [DEBUG] The check '\"opt\" in model_type_str_lower' 的结果是: {check_result}")
+        # except Exception as e:
+        #     print(f"--- [DEBUG] 打印调试信息时发生错误: {e}")
+        # print("--------------------------------------------------------------------")
+        # # =================================================================
+        
         def format_rank(x):
             rank = int(np.around(x))
             return max(rank, 1)
@@ -599,7 +808,7 @@ class ChannelPruningEnv:
                     torch.cuda.empty_cache()
                     for j in range(len(self.recon_inps)):
                         with torch.no_grad():
-                            if "OPT" in self.model.__class__.__name__:
+                            if "opt" in self.model.config.model_type.lower():
                                 self.recon_outs[j] = \
                                 layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
                             else:
@@ -610,145 +819,303 @@ class ChannelPruningEnv:
 
                 return preserve_ratio, self.hidden_size
 
+        # if head:
+        #     attn = get_mha(self.model, idx)
+        #     target_layer = get_mha_proj(self.model, idx)
+        #     d_prime = format_rank(preserve_ratio * self.num_key_value_heads)
+        #     ratio = d_prime / self.num_key_value_heads
+            
+        #     # --- START MODIFICATION ---
+        #     # 1. 确定一个有效的计算设备 (例如主设备)
+        #     compute_device = self.device 
+
+        #     # 2. 在访问权重数据前，强制将可能被offload的模块移动到计算设备
+        #     #    这将触发accelerate将权重从CPU加载回GPU
+        #     attn.q_proj.to(compute_device)
+        #     attn.k_proj.to(compute_device)
+        #     attn.v_proj.to(compute_device)
+        #     target_layer.to(compute_device) # 对于Llama/Qwen, 这是o_proj
+            
+        #     # 3. 确保重要性度量张量也在同一设备上
+        #     head_metric = self.A_metric[global_idx].to(compute_device)
+        #     # --- END MODIFICATION ---
+
+        #     # head_metric = self.A_metric[global_idx]
+        #     head_metric = head_metric.reshape(self.num_key_value_heads, -1)
+        #     head_metric = torch.sum(head_metric, dim=-1)
+        #     sorted_idx = torch.sort(-head_metric)
+        #     preserve_idx = sorted_idx.indices[:d_prime]  # to preserve index
+        #     preserve_idx,_ = torch.sort(preserve_idx)
+
+        #     mask = torch.zeros_like(head_metric, dtype=bool)
+        #     mask[preserve_idx] = True
+            
+        #     # 确保mask在与target_layer相同的设备上
+        #     mask = mask.to(target_layer.weight.device)
+
+        #     if self.recon:
+        #         torch.cuda.empty_cache()
+        #         data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
+        #         handles_inputs = target_layer.register_forward_hook(data_saver)
+        #         inputs = []
+        #         for j in range(len(self.recon_inps)):
+        #             with torch.no_grad():
+        #                 try:
+        #                     if "opt" in self.model.config.model_type.lower():
+        #                         self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
+        #                     else:
+        #                         self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask,
+        #                                              position_ids=self.position_ids)[0]
+        #                 except StopForwardException:
+        #                     pass
+        #                 inputs.append(data_saver.input_store[0].detach().to(self.device))
+        #         handles_inputs.remove()
+
+
+        #     if "opt" in self.model.config.model_type.lower():
+        #         attn.num_heads = d_prime
+        #         attn.embed_dim = attn.head_dim * d_prime
+                
+        #         weight = attn.k_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
+        #         attn.k_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #         weight = attn.q_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
+        #         attn.q_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #         weight = attn.v_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
+        #         attn.v_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #         if attn.k_proj.bias is not None:
+        #             bias = attn.k_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
+        #             attn.k_proj.bias.data = bias.reshape(-1)
+    
+        #             bias = attn.q_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
+        #             attn.q_proj.bias.data = bias.reshape(-1)
+    
+        #             bias = attn.v_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
+        #             attn.v_proj.bias.data = bias.reshape(-1)
+                    
+        #         if self.recon:
+        #             mask_proj = mask.unsqueeze(0)
+        #             mask_proj = mask_proj.repeat(self.attention_head_size, 1).t().reshape(-1)
+        #             # 确保mask_proj在正确的设备上
+        #             mask_proj = mask_proj.to(attn.out_proj.weight.device)
+        #             proj_idx = mask_proj.nonzero().squeeze()
+        #             scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
+        #             scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
+        #             scale_map = scale_map.t()
+    
+        #             weight = attn.out_proj.weight.data.clone().detach()
+        #             attn.out_proj.weight.data = weight[:, mask_proj]
+        #             for i, Cin in enumerate(weight):
+        #                 Out = Cin.reshape(Cin.shape[0], -1).float().to(self.device)
+        #                 Out = torch.mm(scale_map, Out).reshape(-1)
+        #                 attn.out_proj.weight.data[i, :] = Out.to(attn.out_proj.weight.data.device)
+        #         else:
+        #             weight = attn.out_proj.weight.data.reshape(-1, self.attention_head_size, self.num_attention_heads)[:, :,
+        #                      mask]
+        #             attn.out_proj.weight.data = weight.reshape(weight.shape[0], -1)
+        #     else:
+        #         torch.cuda.empty_cache()
+        #         attn.num_heads = d_prime * (attn.num_heads // attn.num_key_value_heads)
+        #         attn.num_key_value_heads = d_prime
+        #         attn.hidden_size = attn.head_dim * attn.num_heads
+        #         attn.max_position_embeddings = attn.head_dim * attn.num_heads
+    
+        #         weight = attn.k_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :]
+        #         attn.k_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #         weight = attn.q_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), -1)[mask, :, :]
+        #         attn.q_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #         weight = attn.v_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :]
+        #         attn.v_proj.weight.data = weight.reshape(-1, weight.shape[2])
+    
+        #     if attn.k_proj.bias is not None:
+        #         # For K_proj bias, use num_key_value_heads
+        #         bias = attn.k_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :]
+        #         attn.k_proj.bias.data = bias.reshape(-1)
+
+        #         # For Q_proj bias, also use num_key_value_heads to align with GQA group pruning strategy
+        #         # The q_proj bias has more elements, but it's structured in groups.
+        #         num_q_groups = self.num_attention_heads // self.num_key_value_heads
+        #         bias = attn.q_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :]
+        #         attn.q_proj.bias.data = bias.reshape(-1)
+
+        #         # For V_proj bias, use num_key_value_heads
+        #         bias = attn.v_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :]
+        #         attn.v_proj.bias.data = bias.reshape(-1)
+                
+        #         if self.recon:
+        #             torch.cuda.empty_cache()
+        #             mask_proj = mask.unsqueeze(0)
+        #             mask_proj = mask_proj.repeat(self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), 1).t().reshape(-1)
+        #             # 确保mask_proj在正确的设备上
+        #             mask_proj = mask_proj.to(attn.o_proj.weight.device)
+        #             proj_idx = mask_proj.nonzero().squeeze()
+        #             scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
+        #             scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
+        #             scale_map = scale_map.t()
+
+        #             torch.cuda.empty_cache()
+        #             weight = attn.o_proj.weight.data.clone().detach()
+        #             attn.o_proj.weight.data = weight[:, mask_proj]
+        #             for i, Cin in enumerate(weight):
+        #                 Out = Cin.reshape(Cin.shape[0], -1).float().to(self.device)
+        #                 Out = torch.mm(scale_map, Out).reshape(-1)
+        #                 attn.o_proj.weight.data[i, :] = Out.to(attn.o_proj.weight.device)
+        #         else:
+        #             # attn.o_proj.weight.data = attn.o_proj.weight.data.cuda()
+        #             weight = attn.o_proj.weight.data.reshape(-1, self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), self.num_key_value_heads)[:, :,
+        #                      mask]
+        #             attn.o_proj.weight.data = weight.reshape(weight.shape[0], -1)
+                
+        compute_device = self.device
+        hidden_metric = self.A_metric[global_idx].to(compute_device)      
         if head:
-            attn = get_mha(self.model, idx)
-            target_layer = get_mha_proj(self.model, idx)
+            # --- [处理注意力头 ATTENTION HEAD] ---
             d_prime = format_rank(preserve_ratio * self.num_key_value_heads)
             ratio = d_prime / self.num_key_value_heads
-            head_metric = self.A_metric[global_idx]
-            head_metric = head_metric.reshape(self.num_key_value_heads, -1)
+            
+            head_metric = hidden_metric.reshape(self.num_key_value_heads, -1)
             head_metric = torch.sum(head_metric, dim=-1)
             sorted_idx = torch.sort(-head_metric)
-            preserve_idx = sorted_idx.indices[:d_prime]  # to preserve index
-            preserve_idx,_ = torch.sort(preserve_idx)
+            preserve_idx = sorted_idx.indices[:d_prime]
+            preserve_idx, _ = torch.sort(preserve_idx)
 
             mask = torch.zeros_like(head_metric, dtype=bool)
             mask[preserve_idx] = True
             
-            # 确保mask在与target_layer相同的设备上
-            mask = mask.to(target_layer.weight.device)
+            attn = get_mha(self.model, idx)
+            attn.to(compute_device)
 
-            if self.recon:
-                torch.cuda.empty_cache()
-                data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
-                handles_inputs = target_layer.register_forward_hook(data_saver)
-                inputs = []
-                for j in range(len(self.recon_inps)):
-                    with torch.no_grad():
-                        try:
-                            if "OPT" in self.model.__class__.__name__:
-                                self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
-                            else:
-                                self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask,
-                                                     position_ids=self.position_ids)[0]
-                        except StopForwardException:
-                            pass
-                        inputs.append(data_saver.input_store[0].detach().to(self.device))
-                handles_inputs.remove()
-
-
-            if "OPT" in self.model.__class__.__name__:
+            if "opt" in self.model.config.model_type.lower():
+                # --- OPT 模型的专属、完整逻辑 ---
+                target_layer = get_mha_proj(self.model, idx)  # This is out_proj for OPT
+                target_layer.to(compute_device)
+                mask = mask.to(target_layer.weight.device)
+                
                 attn.num_heads = d_prime
                 attn.embed_dim = attn.head_dim * d_prime
                 
-                weight = attn.k_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
-                attn.k_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
-                weight = attn.q_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
-                attn.q_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
-                weight = attn.v_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :]
-                attn.v_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
+                # Prune Q, K, V weights
+                attn.k_proj.weight.data = attn.k_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+                attn.q_proj.weight.data = attn.q_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+                attn.v_proj.weight.data = attn.v_proj.weight.data.reshape(self.num_attention_heads, self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+
                 if attn.k_proj.bias is not None:
-                    bias = attn.k_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.k_proj.bias.data = bias.reshape(-1)
-    
-                    bias = attn.q_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.q_proj.bias.data = bias.reshape(-1)
-    
-                    bias = attn.v_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.v_proj.bias.data = bias.reshape(-1)
-                    
+                    # Prune Q, K, V biases
+                    attn.k_proj.bias.data = attn.k_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :].reshape(-1)
+                    attn.q_proj.bias.data = attn.q_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :].reshape(-1)
+                    attn.v_proj.bias.data = attn.v_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :].reshape(-1)
+                
+                # Prune output projection (out_proj) and handle reconstruction
                 if self.recon:
-                    mask_proj = mask.unsqueeze(0)
-                    mask_proj = mask_proj.repeat(self.attention_head_size, 1).t().reshape(-1)
-                    # 确保mask_proj在正确的设备上
-                    mask_proj = mask_proj.to(attn.out_proj.weight.device)
+                    data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
+                    handles_inputs = target_layer.register_forward_hook(data_saver)
+                    inputs = []
+                    for j in range(len(self.recon_inps)):
+                        with torch.no_grad():
+                            try:
+                                self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
+                            except StopForwardException:
+                                pass
+                            inputs.append(data_saver.input_store[0].detach().to(self.device))
+                    handles_inputs.remove()
+
+                    mask_proj = mask.unsqueeze(0).repeat(self.attention_head_size, 1).t().reshape(-1)
+                    mask_proj = mask_proj.to(target_layer.weight.device)
                     proj_idx = mask_proj.nonzero().squeeze()
-                    scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
+
+                    scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size).t()
                     scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
-                    scale_map = scale_map.t()
-    
-                    weight = attn.out_proj.weight.data.clone().detach()
-                    attn.out_proj.weight.data = weight[:, mask_proj]
+                    
+                    weight = target_layer.weight.data.clone().detach()
+                    target_layer.weight.data = weight[:, mask_proj]
                     for i, Cin in enumerate(weight):
                         Out = Cin.reshape(Cin.shape[0], -1).float().to(self.device)
                         Out = torch.mm(scale_map, Out).reshape(-1)
-                        attn.out_proj.weight.data[i, :] = Out.to(attn.out_proj.weight.data.device)
+                        target_layer.weight.data[i, :] = Out.to(target_layer.weight.device)
                 else:
-                    weight = attn.out_proj.weight.data.reshape(-1, self.attention_head_size, self.num_attention_heads)[:, :,
-                             mask]
-                    attn.out_proj.weight.data = weight.reshape(weight.shape[0], -1)
+                    weight = target_layer.weight.data.reshape(-1, self.attention_head_size, self.num_attention_heads)[:, :, mask]
+                    target_layer.weight.data = weight.reshape(weight.shape[0], -1)
+            
             else:
-                torch.cuda.empty_cache()
-                attn.num_heads = d_prime * (attn.num_heads // attn.num_key_value_heads)
+                # --- Llama/Qwen 等模型的专属、完整逻辑 ---
+                target_layer = get_mha_proj(self.model, idx) # This is o_proj for Llama/Qwen
+                target_layer.to(compute_device)
+                mask = mask.to(target_layer.weight.device)
+                
+                num_q_groups = attn.num_heads // attn.num_key_value_heads
+                attn.num_heads = d_prime * num_q_groups
                 attn.num_key_value_heads = d_prime
                 attn.hidden_size = attn.head_dim * attn.num_heads
-                attn.max_position_embeddings = attn.head_dim * attn.num_heads
-    
-                weight = attn.k_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :]
-                attn.k_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
-                weight = attn.q_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), -1)[mask, :, :]
-                attn.q_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
-                weight = attn.v_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :]
-                attn.v_proj.weight.data = weight.reshape(-1, weight.shape[2])
-    
-                if attn.k_proj.bias is not None:
-                    bias = attn.k_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.k_proj.bias.data = bias.reshape(-1)
-    
-                    bias = attn.q_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.q_proj.bias.data = bias.reshape(-1)
-    
-                    bias = attn.v_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :]
-                    attn.v_proj.bias.data = bias.reshape(-1)
-                
-                if self.recon:
-                    torch.cuda.empty_cache()
-                    mask_proj = mask.unsqueeze(0)
-                    mask_proj = mask_proj.repeat(self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), 1).t().reshape(-1)
-                    # 确保mask_proj在正确的设备上
-                    mask_proj = mask_proj.to(attn.o_proj.weight.device)
-                    proj_idx = mask_proj.nonzero().squeeze()
-                    scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size)
-                    scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
-                    scale_map = scale_map.t()
 
-                    torch.cuda.empty_cache()
-                    weight = attn.o_proj.weight.data.clone().detach()
-                    attn.o_proj.weight.data = weight[:, mask_proj]
+                # Prune K, V weights
+                attn.k_proj.weight.data = attn.k_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+                attn.v_proj.weight.data = attn.v_proj.weight.data.reshape(self.num_key_value_heads, self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+                
+                # Prune Q weights (grouped by num_key_value_heads)
+                attn.q_proj.weight.data = attn.q_proj.weight.data.reshape(self.num_key_value_heads, num_q_groups * self.attention_head_size, -1)[mask, :, :].reshape(-1, self.hidden_size)
+
+                if attn.k_proj.bias is not None:
+                    # Prune K, V, Q biases
+                    attn.k_proj.bias.data = attn.k_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :].reshape(-1)
+                    attn.v_proj.bias.data = attn.v_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :].reshape(-1)
+                    attn.q_proj.bias.data = attn.q_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :].reshape(-1)
+                
+                # Prune output projection (o_proj) and handle reconstruction
+                if self.recon:
+                    data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
+                    handles_inputs = target_layer.register_forward_hook(data_saver)
+                    inputs = []
+                    for j in range(len(self.recon_inps)):
+                        with torch.no_grad():
+                            try:
+                                self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask, position_ids=self.position_ids)[0]
+                            except StopForwardException:
+                                pass
+                            inputs.append(data_saver.input_store[0].detach().to(self.device))
+                    handles_inputs.remove()
+                    
+                    mask_proj = mask.unsqueeze(0).repeat(self.attention_head_size * num_q_groups, 1).t().reshape(-1)
+                    mask_proj = mask_proj.to(target_layer.weight.device)
+                    proj_idx = mask_proj.nonzero().squeeze()
+
+                    scale_map = self.create_feat_scaleing_attn(inputs, np.array(proj_idx.cpu()), self.hidden_size).t()
+                    scale_map = torch.from_numpy(scale_map).type(dtype=torch.float).to(self.device)
+
+                    weight = target_layer.weight.data.clone().detach()
+                    target_layer.weight.data = weight[:, mask_proj]
                     for i, Cin in enumerate(weight):
                         Out = Cin.reshape(Cin.shape[0], -1).float().to(self.device)
                         Out = torch.mm(scale_map, Out).reshape(-1)
-                        attn.o_proj.weight.data[i, :] = Out.to(attn.o_proj.weight.device)
+                        target_layer.weight.data[i, :] = Out.to(target_layer.weight.device)
                 else:
-                    # attn.o_proj.weight.data = attn.o_proj.weight.data.cuda()
-                    weight = attn.o_proj.weight.data.reshape(-1, self.attention_head_size*(attn.num_heads // attn.num_key_value_heads), self.num_key_value_heads)[:, :,
-                             mask]
-                    attn.o_proj.weight.data = weight.reshape(weight.shape[0], -1)
-                
+                    weight = target_layer.weight.data.reshape(-1, self.attention_head_size * num_q_groups, self.num_key_value_heads)[:, :, mask]
+                    target_layer.weight.data = weight.reshape(weight.shape[0], -1)
 
         else:
-            if "OPT" in self.model.__class__.__name__:
+            if "opt" in self.model.config.model_type.lower():
                 pre_layer = get_ffn1(self.model, idx)
                 target_layer = get_ffn2(self.model, idx)
             else:
                 pre_layer_1 = get_gate(self.model, idx)
                 pre_layer_2 = get_up(self.model, idx)
                 target_layer = get_down(self.model, idx)
+                
+                # --- START MODIFICATION ---
+                # 1. 确定一个有效的计算设备 (例如主设备)
+                compute_device = self.device
+
+                # 2. 在访问权重数据前，强制将可能被offload的模块移动到计算设备
+                pre_layer_1.to(compute_device)
+                pre_layer_2.to(compute_device)
+                target_layer.to(compute_device)
+
+                # 3. 确保重要性度量张量也在同一设备上
+                hidden_metric = self.A_metric[global_idx].to(compute_device)
+                # --- END MODIFICATION ---
                 
             d_prime = format_rank(preserve_ratio * target_layer.weight.data.shape[1])
             ratio = d_prime / target_layer.weight.data.shape[1]
@@ -772,7 +1139,7 @@ class ChannelPruningEnv:
                 for j in range(len(self.recon_inps)):
                     with torch.no_grad():
                         try:
-                            if "OPT" in self.model.__class__.__name__:
+                            if "opt" in self.model.config.model_type.lower():
                                 self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
                             else:
                                 self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask,
@@ -797,7 +1164,7 @@ class ChannelPruningEnv:
             else:
                 target_layer.weight.data = target_layer.weight.data[:, mask]
 
-            if "OPT" in self.model.__class__.__name__:
+            if "opt" in self.model.config.model_type.lower():
                 pre_layer.weight.data = pre_layer.weight.data[mask, :]
                 if pre_layer.bias is not None:
                     pre_layer.bias.data = pre_layer.bias.data[mask]
@@ -815,7 +1182,7 @@ class ChannelPruningEnv:
                 torch.cuda.empty_cache()
                 for j in range(len(self.recon_inps)):
                     with torch.no_grad():
-                        if "OPT" in self.model.__class__.__name__:
+                        if "opt" in self.model.config.model_type.lower():
                             self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask)[0]
                         else:
                             self.recon_outs[j] = layer(self.recon_inps[j].unsqueeze(0), attention_mask=self.attention_mask,
@@ -843,11 +1210,14 @@ class ChannelPruningEnv:
             # print("=> Resetting environment: creating a fresh model instance...")
             
             # 1. 在CPU上快速创建一个新的、未经修改的模型“骨架”
+            # ==================== 核心修改 3: reset时也使用 bfloat16 ====================
             fresh_model = AutoModelForCausalLM.from_pretrained(
                 self.model_path,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16, # <--- 修改这里
+                # torch_dtype=torch.float16,
                 low_cpu_mem_usage=True 
             )
+            # =========================================================================
             
             # 2. 【新增的关键步骤】为新模型恢复 .seqlen 属性
             #    这里的逻辑与您原来 _get_model_local 中的逻辑保持一致
@@ -1053,7 +1423,7 @@ class ChannelPruningEnv:
     def prepare_calibration_input_opt(self):
         use_cache = self.model.config.use_cache
         self.model.config.use_cache = False
-        if "OPT" in self.model.__class__.__name__:
+        if "opt" in self.model.config.model_type.lower():
             layers = self.model.model.decoder.layers
         else:
             layers = self.model.model.layers
@@ -1226,7 +1596,7 @@ class ChannelPruningEnv:
         self._generate_prunable_module_names()
         
         with torch.no_grad():
-            if "OPT" in self.model.__class__.__name__:
+            if "opt" in self.model.config.model_type.lower():
                 print('Experiments with OPT models')
                 self.inps, self.outs, self.attention_mask, self.position_ids = self.prepare_calibration_input_opt()
             else:
@@ -1262,6 +1632,8 @@ class ChannelPruningEnv:
                     bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
         is_llama_model = "Llama" in self.model.__class__.__name__
+        
+        is_qwen_model = "Qwen" in self.model.__class__.__name__ # 添加Qwen的判断
 
         for i in pbar:
             layer_start_time = time.time()
@@ -1324,7 +1696,40 @@ class ChannelPruningEnv:
                 #    得到每个中间神经元（I维度）的唯一重要性分数。
                 #    最终结果是一个长度为 I 的向量。
                 self.A_metric.append(torch.mean(W_metric_ffn, dim=0))
+                
+            # --- START MODIFICATION ---
+            elif is_qwen_model:
+                # Qwen的逻辑与Llama非常相似，但访问路径不同
+                down_layer = get_down(self.model, i) # get_down现在已经能处理Qwen
+                
+                ffn_para = get_layer_param(layer) - mha_para
+                ffn_norm = get_norm_param(layer) - mha_norm
+                self.param_list.append(ffn_para / 1e6)
+                self.norm_para.append(ffn_norm / 1e6)
 
+                wrapped_down = WrappedGPT(down_layer)
+                down_handle = down_layer.register_forward_hook(
+                    lambda _, inp, out: wrapped_down.add_batch(inp[0].data, out.data)
+                )
+                
+                # 执行前向传播以收集激活
+                for j in range(self.n_samples):
+                    with torch.no_grad():
+                        # Llama/Qwen的forward参数一致
+                        self.outs[j] = layer(self.inps[j].unsqueeze(0), attention_mask=self.attention_mask, position_ids=self.position_ids)[0]
+                
+                mha_handle.remove()
+                down_handle.remove()
+
+                # MHA 度量衡计算逻辑不变
+                W_metric_mha = torch.abs(mha_proj_layer.weight.data) * torch.sqrt(wrapped_mha.scaler_row.reshape((1, -1)))
+                self.A_metric.append(torch.mean(W_metric_mha, dim=0))
+
+                # Wanda for Qwen FFN: 与Llama逻辑完全相同
+                W_metric_ffn = torch.abs(down_layer.weight.data) * torch.sqrt(wrapped_down.scaler_row.reshape((1, -1)))
+                self.A_metric.append(torch.mean(W_metric_ffn, dim=0))
+            # --- END MODIFICATION ---
+            
             else: # OPT 及其他标准 FFN 模型的逻辑
                 ffn_layer = get_ffn2(self.model, i)
                 
@@ -1401,55 +1806,62 @@ class ChannelPruningEnv:
                 return False
 
     def _evaluate_with_lmeval(self, model):
-        """使用完整的lm-eval-harness进行评估 (增加调试功能)"""
+        """使用完整的lm-eval-harness进行评估 (通过猴子补丁支持本地数据集)"""
+        import lm_eval.api.task
+        # 保存原始的 Task 初始化函数
+        original_init = lm_eval.api.task.ConfigurableTask.__init__
+
+        # 定义我们的补丁函数
+        def patched_configurable_task_init(self, config):
+            """
+            这是一个临时的替代品，用于替换 lm_eval.api.task.ConfigurableTask.__init__。
+            它会检查正在初始化的任务是否为 'piqa'，如果是，则强行修改其配置以使用本地路径。
+            """
+            # 动态构建到本地 piqa 数据集的绝对路径
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            PIQA_LOCAL_PATH = os.path.join(current_dir, '..', 'local_datasets', 'piqa')
+            
+            # 检查任务名称是否为 piqa (或继承自 piqa)
+            if config.get("task") == "piqa" or config.get("group") == "piqa":
+                 # 检查本地路径是否存在，以决定是否打补丁
+                if os.path.exists(PIQA_LOCAL_PATH):
+                    print(f"🐵 Intercepted PIQA task config. Overriding dataset_path to: {PIQA_LOCAL_PATH}")
+                    config["dataset_path"] = PIQA_LOCAL_PATH
+                    config["dataset_name"] = None
+            
+            # 无论是否修改，都必须调用原始的 __init__ 函数来完成对象的初始化
+            original_init(self, config=config)
+
         try:
-            # 使用新版lm-eval-harness API
+            # --- 应用猴子补丁 ---
+            lm_eval.api.task.ConfigurableTask.__init__ = patched_configurable_task_init
+            print("✅ Monkey-patch for local PIQA dataset applied.")
+
             model_wrapper = HFLM(
                 pretrained=model,
                 tokenizer=self.tokenizer,
                 batch_size=4,
-                # device 字段在新版中通常由HFLM自动处理，但为保险起见保留
-                # device=self.device 
             )
             
-            # 选择核心下游任务
-            # task_names = ["hellaswag", "winogrande", "arc_easy"]
-            # 任务名称与论文表格的对应关系：
-            # BoolQ -> boolq
-            # PIQA -> piqa  
-            # HellaSwag -> hellaswag
-            # WinoGrande -> winogrande
-            # ARC-e -> arc_easy
-            # ARC-c -> arc_challenge
-            # OBQA -> openbookqa
             task_names = ["boolq", "piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
             print(f"=> Evaluating on {len(task_names)} downstream tasks: {task_names}")
             
-            # 使用新版API进行评估
+            # 使用原始的 simple_evaluate API，补丁会在后台生效
             results = evaluator.simple_evaluate(
                 model=model_wrapper,
                 tasks=task_names,
                 num_fewshot=0,
-                limit=100,
+                # limit=100,
                 bootstrap_iters=100,
-                # no_cache=True, # 在离线模式下，最好不要禁用缓存
                 verbosity="INFO"
             )
-            
-            # # --- 核心调试步骤：打印原始结果 ---
-            # print("\n" + "="*70)
-            # print("🔍 DEBUG: Raw results from lm-eval-harness:")
-            # print(json.dumps(results, indent=2))
-            # print("="*70 + "\n")
-            # # --- 调试结束 ---
 
+            # --- 处理结果 (逻辑不变) ---
             print("=> Downstream Task Results (lm-eval-harness):")
             task_scores = {}
-            
             if "results" in results:
                 for task_name, task_result in results["results"].items():
                     if isinstance(task_result, dict):
-                        # 更稳健地寻找主要指标
                         main_metrics = ["acc,none", "acc_norm,none", "acc", "acc_norm", "exact_match", "f1"]
                         found_metric = False
                         for metric in main_metrics:
@@ -1458,82 +1870,30 @@ class ChannelPruningEnv:
                                 task_scores[task_name] = score
                                 print(f"   ✅ {task_name}: {score:.4f} (found metric: '{metric}')")
                                 found_metric = True
-                                break # 找到了就处理下一个任务
+                                break
                         if not found_metric:
                             print(f"   ⚠️ Could not find a main metric for task '{task_name}' in its results.")
-
                 if task_scores:
                     avg_score = sum(task_scores.values()) / len(task_scores)
                     print(f"=> Average downstream task performance: {avg_score:.4f}")
                     return True
                 else:
-                    print("=> WARNING: No valid task scores were extracted from the raw results.")
+                    print("=> WARNING: No valid task scores were extracted.")
                     return False
             else:
                 print("=> WARNING: The key 'results' was not found in the raw output!")
                 return False
-                
+
         except Exception as e:
             import traceback
             print(f"=> lm-eval-harness evaluation failed: {str(e)}")
             traceback.print_exc()
             raise e
-
-    def _evaluate_with_lightweight(self, model):
-        """使用轻量级评估器进行评估"""
-        try:
-            print("=> Using lightweight evaluation implementation")
-            print("=> Setting up model for downstream evaluation...")
-            evaluator_light = LightweightEvaluator(model, self.tokenizer, device=None)
-            
-            print("=> Starting evaluation with 50 samples per task...")
-            # 进行评估
-            results = evaluator_light.evaluate_all(num_samples_per_task=50)
-            
-            print("=> Evaluation completed successfully!")
-            print(f"=> Total results obtained: {len(results)} items")
-            
-            # 显示结果
-            print("\n=> Downstream Task Results (lightweight):")
-            
-            # 按任务类型分组显示
-            reasoning_tasks = ["boolq_acc", "piqa_acc", "hellaswag_acc"]
-            commonsense_tasks = ["winogrande_acc", "obqa_acc"]
-            science_tasks = ["arc_easy_acc", "arc_challenge_acc"]
-            
-            if any(task in results for task in reasoning_tasks):
-                print("   Reasoning Tasks:")
-                for task in reasoning_tasks:
-                    if task in results:
-                        task_name = task.replace("_acc", "").upper()
-                        print(f"     {task_name}: {results[task]:.4f}")
-            
-            if any(task in results for task in commonsense_tasks):
-                print("   Commonsense Tasks:")
-                for task in commonsense_tasks:
-                    if task in results:
-                        task_name = task.replace("_acc", "").title().replace("_", "-")
-                        print(f"     {task_name}: {results[task]:.4f}")
-                        
-            if any(task in results for task in science_tasks):
-                print("   Science Tasks:")
-                for task in science_tasks:
-                    if task in results:
-                        task_name = task.replace("_acc", "").replace("_", "-").upper()
-                        print(f"     {task_name}: {results[task]:.4f}")
-            
-            if "avg_score" in results:
-                print(f"\n=> Average downstream task performance: {results['avg_score']:.4f}")
-            
-            # print("=> Downstream task evaluation completed successfully")
-            return True
-            
-        except Exception as e:
-            print(f"=> Lightweight evaluation failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            raise e
-
+        finally:
+            # --- 关键: 无论成功或失败，都恢复原始函数 ---
+            lm_eval.api.task.ConfigurableTask.__init__ = original_init
+            print("✅ Monkey-patch for local PIQA dataset restored.")
+        
     def _simple_generation_test(self, model):
         """
         备选的简单文本生成测试
@@ -1564,13 +1924,21 @@ class ChannelPruningEnv:
         
         print("=> Simple generation test completed")
 
+    def _validate_ppl_only(self, model):
+        """仅计算PPL，不进行下游任务评估 (用于初始化阶段)"""
+        return eval_ppl(model, self.tokenizer)
+
     def _validate(self, model):
-        ppl = eval_ppl(model, self.tokenizer)
         
-        # 检查是否开启下游任务评估
+        # ppl = eval_ppl(model, self.tokenizer)
+        ppl = eval_ppl(model, self.tokenizer, dataset_override=self.active_reward_eval_set)
+        
+        # 检查是否开启下游任务评估以及是否延迟评估
         enable_downstream = getattr(self.args, 'enable_downstream', True)
+        delayed_eval = getattr(self.args, 'delayed_downstream_eval', False)
         
-        if enable_downstream:
+        # 如果是延迟评估模式且在导出作业中，跳过下游任务评估
+        if enable_downstream and not delayed_eval:
             # 下游任务评估 - 使用智能框架选择，失败时不终止程序
             try:
                 success = self.test_model(model)
@@ -1581,6 +1949,8 @@ class ChannelPruningEnv:
             except Exception as e:
                 print(f"=> WARNING: Downstream evaluation encountered an error: {str(e)}")
                 print("=> Continuing with PPL-only validation...")
+        elif delayed_eval:
+            print("=> Downstream evaluation delayed until post-pruning+reconstruction")
         else:
             # print("=> Downstream task evaluation is disabled")
             # print("=> Using PPL-only validation")

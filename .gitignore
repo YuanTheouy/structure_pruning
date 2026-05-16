@@ -46,3 +46,19 @@ llm_weights/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# ---------------------------------------------------
+# Additional heavy files and folders added by AI assistant
+# ---------------------------------------------------
+
+# Additional Model Weights and Saved Policies
+llama1-13b/
+SAC_model/
+
+# Features and caches
+feature_cache/
+test_cache_*/
+.cache/
+
+# Local datasets
+local_datasets/

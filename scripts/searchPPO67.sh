@@ -1,42 +1,41 @@
 #!/bin/bash
-# ===# --- 1. 参数解析 ---
-GPU_ID=0           # 默认使用GPU 0
-EXP_ID=0           # 默认实验配置ID
-TARGET_SPARSITY=0.2 # 默认目标稀疏度 (20%参数被剪枝)
-TRAIN_EPISODES=5000 # 默认训练轮数
-AGENT_PATH=""
-USE_GRADUAL_PRUNING=false   # 默认开启渐进式剪枝
-GRADUAL_INITIAL_SPARSITY=0.05 # 渐进式剪枝的初始稀疏度
-GRADUAL_PRUNING_END_EPISODE=1000 # 渐进式剪枝结束的episode
+# =================================================================================
+#    AMC-LLM 剪枝搜索脚本 - OPT-6.7B PPO训练版本 (增强版)
+# =================================================================================
+#
+#   用法:
+#       1. 基础用法: ./scripts/searchPPO67.sh
+#       2. 指定GPU: ./scripts/searchPPO67.sh --gpu-id "0,1"
+#       3. 指定实验配置: ./scripts/searchPPO67.sh --gpu-id "1,2" --exp-id 2
+#       4. 指定目标稀疏度: ./scripts/searchPPO67.sh --target-sparsity 0.3
+#       5. 指定训练轮数: ./scripts/searchPPO67.sh --train-episodes 6000
+#       6. 兼容旧参数: ./scripts/searchPPO67.sh --preserve-ratio 0.7  (会自动转换为稀疏度0.3)
+#
+#   脚本将在前台运行，您可以直接看到训练输出。
+#
+# =================================================================================
 
+# --- 1. 参数解析 ---
+GPU_ID="0,1"           # 默认使用GPU 0,1 (支持多GPU)
+EXP_ID=0           # 默认实验配置ID
+TARGET_SPARSITY=0.3 # 默认目标稀疏度 (30%参数被剪枝)
+TRAIN_EPISODES=6000 # 默认训练轮数 (6.7B模型建议更多训练)
 ENABLE_DOWNSTREAM=false # 默认关闭下游任务评估
 STATE_MODE=0       # 默认使用特征提取的状态 (0=全局剪枝率, 1=特征提取状态)
 FEATURE_CONFIG="default" # 默认使用默认特征配置 (default/basic/attention/comprehensive/minimal/activation)
 USE_GUMBEL_SOFTMAX=false # 默认关闭Gumbel-Softmax功能
+USE_GRADUAL_PRUNING=true   # 默认启用渐进式剪枝 (6.7B模型建议启用)
+GRADUAL_PRUNING_END_EPISODE=3000 # 渐进式剪枝结束的episode (6.7B模型用更长时间)
+GRADUAL_INITIAL_SPARSITY=0.05 # 渐进式剪枝的初始稀疏度
 
 # --- 评估数据集配置 ---
-USE_DATASET_GROWTH=false     # 默认开启数据集渐进增长功能
+USE_DATASET_GROWTH=false     # 默认关闭数据集渐进增长功能
 DATASET_INITIAL_RATIO=0.05     # 数据集初始使用比例 (1.0 = 使用全部验证集)
 DATASET_FINAL_RATIO=1.0       # 数据集最终使用比例 (1.0 = 使用全部验证集)
 DATASET_GROWTH_START_EPISODE=0 # 数据集增长开始的episode
 DATASET_GROWTH_END_EPISODE=1000 # 数据集增长结束的episode
 
 SHOW_HELP=false
-# =============================================================
-#    AMC-LLM 剪枝搜索脚本 - OPT-1.3B PPO训练版本 (增强版)
-# =================================================================================
-#
-#   用法:
-#       1. 基础用法: ./scripts/searchPPO13.sh
-#       2. 指定GPU: ./scripts/searchPPO13.sh --gpu-id 0
-#       3. 指定实验配置: ./scripts/searchPPO13.sh --gpu-id 1 --exp-id 2
-#       4. 指定目标稀疏度: ./scripts/searchPPO13.sh --target-sparsity 0.2
-#       5. 指定训练轮数: ./scripts/searchPPO13.sh --train-episodes 5000
-#       6. 兼容旧参数: ./scripts/searchPPO13.sh --preserve-ratio 0.8  (会自动转换为稀疏度0.2)
-#
-#   脚本将在前台运行，您可以直接看到训练输出。
-#
-# =================================================================================
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -125,10 +124,6 @@ while [[ $# -gt 0 ]]; do
             DATASET_GROWTH_END_EPISODE="$2"
             shift 2
             ;;
-        --agent-path)
-            AGENT_PATH="$2"
-            shift 2
-            ;;
         --help|-h)
             SHOW_HELP=true
             shift
@@ -145,27 +140,27 @@ if [ "$SHOW_HELP" = true ]; then
     echo "用法: $0 [选项]"
     echo ""
     echo "选项:"
-    echo "  --gpu-id ID         指定使用的GPU ID (默认: 0)"
+    echo "  --gpu-id ID         指定使用的GPU ID (支持多GPU: \"0,1\", 默认: \"0,1\")"
     echo "  --exp-id ID         指定实验配置ID (默认: 0)"
-    echo "  --target-sparsity S 指定目标稀疏度 (默认: 0.2，即剪枝20%参数)"
-    echo "  --preserve-ratio R  指定保留比例 (会自动转换为稀疏度，兼容旧脚本)"
-    echo "  --train-episodes N  指定训练轮数 (默认: 5000)"
-    echo "  --enable-downstream 开启下游任务评估 (默认: 开启)"
-    echo "  --disable-downstream 关闭下游任务评估"
+    echo "  --target-sparsity S 指定目标稀疏度 (默认: 0.3)"
+    echo "  --preserve-ratio R  指定保留比例 (会自动转换为稀疏度)"
+    echo "  --train-episodes N  指定训练轮数 (默认: 6000)"
+    echo "  --enable-downstream 开启下游任务评估"
+    echo "  --disable-downstream 关闭下游任务评估 (默认)"
     echo "  --state-mode MODE   指定Agent状态模式 (0=全局剪枝率, 1=特征提取状态, 默认: 1)"
     echo "  --feature-config CFG 指定特征配置 (default/basic/attention/comprehensive/minimal/activation, 默认: default)"
     echo "  --use-gumbel-softmax 启用Gumbel-Softmax离散动作空间方法"
-    echo "  --disable-gumbel-softmax 禁用Gumbel-Softmax，使用传统连续动作空间方法 (默认)"
-    echo "  --use-gradual-pruning 启用渐进式剪枝 (从初始稀疏度逐步增加到目标稀疏度)"
+    echo "  --disable-gumbel-softmax 禁用Gumbel-Softmax (默认)"
+    echo "  --use-gradual-pruning 启用渐进式剪枝 (默认启用)"
     echo "  --disable-gradual-pruning 禁用渐进式剪枝"
-    echo "  --gradual-pruning-end-episode N 渐进式剪枝结束的episode (默认: 10)"
+    echo "  --gradual-pruning-end-episode N 渐进式剪枝结束的episode (默认: 3000)"
     echo "  --gradual-initial-sparsity S 渐进式剪枝的初始稀疏度 (默认: 0.05)"
-    echo "  --use-dataset-growth      启用数据集渐进增长功能 (训练过程中数据集使用比例逐渐增长)"
-    echo "  --disable-dataset-growth  禁用数据集渐进增长功能 (默认使用全部验证集)"
-    echo "  --dataset-initial-ratio R 数据集初始使用比例 (0.0-1.0, 默认: 1.0)"
+    echo "  --use-dataset-growth      启用数据集渐进增长功能"
+    echo "  --disable-dataset-growth  禁用数据集渐进增长功能 (默认)"
+    echo "  --dataset-initial-ratio R 数据集初始使用比例 (0.0-1.0, 默认: 0.05)"
     echo "  --dataset-final-ratio R   数据集最终使用比例 (0.0-1.0, 默认: 1.0)"
     echo "  --dataset-growth-start-episode N  数据集开始增长的episode (默认: 0)"
-    echo "  --dataset-growth-end-episode N    数据集增长结束的episode (默认: 200)"
+    echo "  --dataset-growth-end-episode N    数据集增长结束的episode (默认: 1000)"
     echo "  --help, -h          显示此帮助信息"
     echo ""
     echo "特征配置说明:"
@@ -178,68 +173,54 @@ if [ "$SHOW_HELP" = true ]; then
     echo ""
     echo "Gumbel-Softmax功能说明:"
     echo "  Gumbel-Softmax是一种将连续动作空间离散化的技术，通过可微分的软采样实现稳定的策略学习。"
-    echo "  启用后将使用4个离散动作bins，温度从2.0退火到0.2，提高训练稳定性。"
+    echo "  启用后将使用20个离散动作bins，温度从2.0退火到0.2，提高训练稳定性。"
     echo ""
     echo "渐进式剪枝功能说明:"
     echo "  渐进式剪枝从较低的稀疏度开始，在训练过程中逐步增加到目标稀疏度。"
-    echo "  目标稀疏度由 --target-sparsity 参数决定。"
-    echo "  初始稀疏度由 --gradual-initial-sparsity 参数决定 (默认: 0.05)。"
     echo "  这种方法可以帮助模型更好地适应剪枝过程，提高最终的性能。"
     echo ""
     echo "数据集渐进增长功能说明:"
     echo "  数据集渐进增长从较小的数据集比例开始，在训练过程中逐步增加到完整数据集。"
     echo "  这种课程学习方法可以帮助模型在训练初期快速收敛，后期使用更多数据提高性能。"
-    echo "  初始数据集比例由 --dataset-initial-ratio 参数决定 (默认: 1.0，即使用全部验证集)。"
-    echo "  最终数据集比例由 --dataset-final-ratio 参数决定 (默认: 1.0，即使用全部验证集)。"
-    echo "  比例范围: 0.0-1.0，其中 1.0 表示使用全部验证集，0.1 表示使用 10% 的验证集。"
+    echo "  初始数据集比例由 --dataset-initial-ratio 参数决定 (默认: 0.05)。"
+    echo "  最终数据集比例由 --dataset-final-ratio 参数决定 (默认: 1.0)。"
     echo ""
     echo "示例:"
-    echo "  $0                              # 使用默认设置"
-    echo "  $0 --gpu-id 1                   # 使用GPU 1"
-    echo "  $0 --state-mode 0               # 使用全局剪枝率作为状态"
-    echo "  $0 --state-mode 1 --feature-config basic # 使用基础特征配置"
-    echo "  $0 --feature-config attention   # 使用注意力导向特征"
-    echo "  $0 --disable-downstream         # 关闭下游任务评估"
-    echo "  $0 --exp-id 2 --target-sparsity 0.2 # 实验配置2，目标稀疏度20%"
-    echo "  $0 --train-episodes 5000        # 训练5000轮"
-    echo "  $0 --use-gumbel-softmax         # 启用Gumbel-Softmax离散动作空间"
-    echo "  $0 --use-gumbel-softmax --state-mode 0 # 启用Gumbel-Softmax + 全局剪枝率状态"
-    echo "  $0 --use-gradual-pruning --gradual-pruning-end-episode 3000 # 在3000个episode时完成剪枝"
-    echo "  $0 --target-sparsity 0.2 --use-gradual-pruning # 目标稀疏度20%，启用渐进式剪枝"
-    echo "  $0 --use-gradual-pruning --gradual-initial-sparsity 0.1 # 从10%初始稀疏度开始渐进式剪枝"
-    echo "  $0 --target-sparsity 0.3 --gradual-initial-sparsity 0.1 --gradual-pruning-end-episode 3000 # 完整的渐进式剪枝配置"
-    echo "  $0 --use-dataset-growth --dataset-initial-ratio 0.05 --dataset-final-ratio 1.0 # 从5%验证集开始增长到全集"
-    echo "  $0 --use-dataset-growth --dataset-growth-end-episode 300 # 在300个episode完成数据集增长"
-    echo "  $0 --use-gradual-pruning --use-dataset-growth # 同时启用渐进式剪枝和数据集增长"
-    echo "  $0 --disable-dataset-growth # 使用全部验证集 (默认行为)"
+    echo "  $0                                # 使用默认设置"
+    echo "  $0 --gpu-id \"0,1\"                 # 使用GPU 0,1"
+    echo "  $0 --gpu-id 1                     # 使用单个GPU 1"
+    echo "  $0 --target-sparsity 0.4          # 设置目标稀疏度为40%"
+    echo "  $0 --use-gradual-pruning --gradual-initial-sparsity 0.1 --gradual-pruning-end-episode 2500"
+    echo "  $0 --use-dataset-growth --dataset-initial-ratio 0.1 --dataset-growth-end-episode 2000"
+    echo "  $0 --use-gradual-pruning --use-dataset-growth # 同时启用两种渐进策略"
     exit 0
 fi
 
 # --- 2. 实验配置池 ---
-#                   ID:     0      1      2      3      4
-learning_rates=(          1e-4   5e-4   1e-4   5e-4)
+#                   ID:     0      1      2      3
+learning_rates=(          5e-4   5e-4   5e-4   5e-4)
 entropy_coeffs=(          0.01   0.01   0.05   0.05)
-learning_epochs=(         10     10     15     15)
+learning_epochs=(         10     10     10     10)
 clip_params=(             0.2    0.1    0.2    0.1)
 seeds=(                   2025   2026   2027   2028)
-num_collects=(            15     15     20     20)
+num_collects=(            15     15     15     15)
 
 # --- 3. 固定参数配置 ---
-MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-1.3b"
-# MODEL_PATH="/home/yx/yx_repository/01_Models/opt-1.3b"
-# MODEL_PATH="/public/home/weijiateng2023/model/opt-1.3b"
-# MODEL_PATH="/home/lisiqi/amc-LLM/model/opt-1.3b"
-MODEL_NAME="opt-1.3b"
+# MODEL_PATH="/home/theo/data/yx_repository/01_Models/opt-2.7b"
+# MODEL_PATH="/home/yx/yx_repository/01_Models/opt-2.7b"
+MODEL_PATH="/public/home/weijiateng2023/model/opt-6.7b"
+# MODEL_PATH="/home/lisiqi/amc-LLM/model/opt-2.7b"
+MODEL_NAME="opt-6.7b"
 PRUNE_TYPE="para"
 LBOUND=0.1
 RBOUND=1.0
 N_SAMPLES=64
 
 # Gumbel-Softmax 相关参数
-NUM_ACTION_BINS=4          # 动作离散化的bins数量
-GUMBEL_TAU_INITIAL=2.0     # Gumbel-Softmax初始温度
-GUMBEL_TAU_FINAL=0.2       # Gumbel-Softmax最终温度
-GUMBEL_ANNEAL_EPISODES=1000  # 温度退火的episode数量
+NUM_ACTION_BINS=20
+GUMBEL_TAU_INITIAL=2.0
+GUMBEL_TAU_FINAL=0.2
+GUMBEL_ANNEAL_EPISODES=1000
 
 # --- 4. 根据实验ID选择超参数 ---
 LEARNING_RATE=${learning_rates[EXP_ID]}
@@ -248,6 +229,19 @@ LEARNING_EPOCHS=${learning_epochs[EXP_ID]}
 CLIP_PARAM=${clip_params[EXP_ID]}
 SEED=${seeds[EXP_ID]}
 NUM_COLLECT=${num_collects[EXP_ID]}
+
+# --- 多GPU处理逻辑 ---
+# 从多GPU字符串中提取主GPU ID（第一个GPU）用于Python参数传递
+MAIN_GPU_ID=$(echo ${GPU_ID} | cut -d',' -f1)
+
+# GPU可用性检查 (如果nvidia-smi可用)
+if command -v nvidia-smi &> /dev/null; then
+    echo "=> [GPU检查] 检测到nvidia-smi，正在验证GPU可用性..."
+    # 检查主GPU是否可用
+    if ! nvidia-smi -i ${MAIN_GPU_ID} &> /dev/null; then
+        echo "  警告: 主GPU ${MAIN_GPU_ID} 可能不可用，请检查GPU设置"
+    fi
+fi
 
 # 根据状态模式设置STATE_MODE_FLAG标志
 if [ "$STATE_MODE" = "1" ]; then
@@ -312,34 +306,31 @@ if [ "$STATE_MODE" = "1" ]; then
     fi
 fi
 
-AGENT_PATH_FLAG=""
-if [ -n "$AGENT_PATH" ]; then
-    AGENT_PATH_FLAG="--agent_path=${AGENT_PATH}"
-fi
-
 # --- 5. 路径与文件命名 ---
 BASE_OUTPUT_DIR="./logs/ppo_experiments"
 mkdir -p ${BASE_OUTPUT_DIR}
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-SUFFIX="exp${EXP_ID}_gpu${GPU_ID}_sparsity${TARGET_SPARSITY}_lr${LEARNING_RATE}_epoch${LEARNING_EPOCHS}_clip${CLIP_PARAM}_entropy${ENTROPY_COEF}_seed${SEED}_${TIMESTAMP}"
-EXPORT_PATH="./checkpoints/opt13b_ppo_${SUFFIX}.pth.tar"
+SUFFIX="exp${EXP_ID}_gpu${MAIN_GPU_ID}_sparsity${TARGET_SPARSITY}_lr${LEARNING_RATE}_epoch${LEARNING_EPOCHS}_clip${CLIP_PARAM}_entropy${ENTROPY_COEF}_seed${SEED}_${TIMESTAMP}"
+EXPORT_PATH="./checkpoints/opt67b_ppo_${SUFFIX}.pth.tar"
 
 # --- 6. 环境变量设置 ---
 export HF_EVALUATE_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-# export HF_HOME="../huggingface" 
+export HF_HOME="../huggingface" 
 
 # 强制GPU绑定 - 确保每个训练进程使用不同GPU
 echo "=> [GPU绑定] 为此进程强制绑定GPU ${GPU_ID}"
 export CUDA_VISIBLE_DEVICES=${GPU_ID}
 echo "=> [GPU绑定] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}" 
+echo "=> [GPU信息] 主GPU ID: ${MAIN_GPU_ID}" 
 
 # --- 7. 显示实验配置信息 ---
 echo "=================================================================="
-echo "   启动 AMC-LLM 剪枝搜索 - OPT-1.3B 实验 #${EXP_ID}"
+echo "   启动 AMC-LLM 剪枝搜索 - OPT-6.7B 实验 #${EXP_ID}"
 echo "=================================================================="
 echo "    实验配置:"
 echo "     - GPU设备:          ${GPU_ID}"
+echo "     - 主GPU ID:         ${MAIN_GPU_ID}"
 echo "     - 模型路径:         ${MODEL_PATH}"
 echo "     - 目标稀疏度:       ${TARGET_SPARSITY} (剪枝 $(awk "BEGIN {printf \"%.1f\", $TARGET_SPARSITY * 100}")% 参数)"
 echo "     - 剪枝类型:         ${PRUNE_TYPE}"
@@ -409,14 +400,13 @@ python -u amc_searchPPO.py \
     --lr_a=${LEARNING_RATE} \
     --clip_param=${CLIP_PARAM} \
     --entropy_coef=${ENTROPY_COEF} \
-    --gpu_id=${GPU_ID} \
+    --gpu_id=${MAIN_GPU_ID} \
     --output="${BASE_OUTPUT_DIR}" \
     --enable_downstream="${ENABLE_DOWNSTREAM}" \
     ${STATE_MODE_FLAG} \
     ${GUMBEL_FLAGS} \
     ${GRADUAL_FLAGS} \
-    ${DATASET_GROWTH_FLAGS} \
-    ${AGENT_PATH_FLAG}
+    ${DATASET_GROWTH_FLAGS}
 
 # --- 9. 训练完成提示 ---
 TRAINING_EXIT_CODE=$?
