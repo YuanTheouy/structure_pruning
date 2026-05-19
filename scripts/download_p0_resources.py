@@ -14,15 +14,15 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_MODEL_NAME = "Qwen2.5-1.5B"
-DEFAULT_MODEL_ID = "qwen/Qwen2.5-1.5B"
+DEFAULT_MODEL_NAME = "opt-2.7b"
+DEFAULT_MODEL_ID = "facebook/opt-2.7b"
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download Qwen2.5/WikiText-2 resources for Early-Warning P0.")
-    parser.add_argument("--provider", choices=["modelscope", "huggingface", "direct"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
-    parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "modelscope"))
+    parser = argparse.ArgumentParser(description="Download OPT/WikiText-2 resources for Early-Warning P0.")
+    parser.add_argument("--provider", choices=["modelscope", "huggingface", "direct"], default=os.environ.get("DOWNLOAD_PROVIDER", "huggingface"))
+    parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "huggingface"))
     parser.add_argument("--model_id", default=os.environ.get("MODEL_ID"))
     parser.add_argument("--modelscope_model_id", default=os.environ.get("MODELSCOPE_MODEL_ID"))
     parser.add_argument("--hf_model_id", default=os.environ.get("HF_MODEL_ID"))

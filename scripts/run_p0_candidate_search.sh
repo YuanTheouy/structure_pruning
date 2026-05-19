@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTHON_BIN=${PYTHON:-"python3"}
-MODEL_NAME=${MODEL_NAME:-"Qwen2.5-1.5B"}
+MODEL_NAME=${MODEL_NAME:-"opt-2.7b"}
 MODEL=${MODEL:-"/workspace/Models/${MODEL_NAME}"}
 WIKITEXT2_PATH=${WIKITEXT2_PATH:-"/workspace/datasets/wikitext/wikitext-2-raw-v1"}
 WIKITEXT2_CONFIG=${WIKITEXT2_CONFIG:-"wikitext-2-raw-v1"}
@@ -15,6 +15,8 @@ N_SAMPLES=${N_SAMPLES:-"32"}
 BATCH_SIZE=${BATCH_SIZE:-"50"}
 SEED=${SEED:-"2025"}
 TRAIN_EPISODES=${TRAIN_EPISODES:-"5000"}
+NUM_COLLECT=${NUM_COLLECT:-"15"}
+LEARNING_EPOCH=${LEARNING_EPOCH:-"10"}
 RUN_ID=${RUN_ID:-"p0_candidates"}
 
 RUN_ROOT=${RUN_ROOT:-"${CKPT_ROOT}/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/${RUN_ID}"}
@@ -37,8 +39,8 @@ export WIKITEXT2_CONFIG
   --rbound=1.0 \
   --n_samples="${N_SAMPLES}" \
   --data_bsize="${BATCH_SIZE}" \
-  --num_collect=15 \
-  --learning_epoch=10 \
+  --num_collect="${NUM_COLLECT}" \
+  --learning_epoch="${LEARNING_EPOCH}" \
   --reward=reward_ppl \
   --train_episode="${TRAIN_EPISODES}" \
   --seed="${SEED}" \
