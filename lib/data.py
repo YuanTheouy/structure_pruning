@@ -1,6 +1,7 @@
 # Code adapted from https://github.com/IST-DASLab/sparsegpt/blob/master/datautils.py
 
 import numpy as np
+import os
 import random
 import torch
 from datasets import load_dataset
@@ -28,8 +29,9 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     # # 保存至本地
     # dataset.save_to_disk('./huggingface/hub/datasets/chn_senti_corp')
 
-    traindata = load_dataset(path="dataset/wikitext/wikitext-2-raw-v1", split='train')
-    testdata = load_dataset(path="dataset/wikitext/wikitext-2-raw-v1", split='test')
+    wikitext2_path = os.environ.get("WIKITEXT2_PATH", "dataset/wikitext/wikitext-2-raw-v1")
+    traindata = load_dataset(path=wikitext2_path, split='train')
+    testdata = load_dataset(path=wikitext2_path, split='test')
 
     # Encode datasets
     trainenc = tokenizer(" ".join(traindata['text']), return_tensors='pt')

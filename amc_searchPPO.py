@@ -5,9 +5,14 @@
 
 import os
 import sys
+import csv
+import json
+import math
+import time
 import numpy as np
 import argparse
 from copy import deepcopy
+from pathlib import Path
 import torch
 from torch import nn
 torch.backends.cudnn.deterministic = True
@@ -16,6 +21,8 @@ from env.channel_pruning_env_llm_global import ChannelPruningEnv
 from env.weight_pruning_env_llm_global import WeightPruningEnv
 from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian, GumbelActor
 from lib.utils import get_output_folder, prGreen, prRed
+from lib.ew_candidates import CandidateRecorder, dump_json, load_json, read_jsonl, safe_model_name
+from lib.ew_projector import compute_policy_budget, make_module_costs, project_score_to_policy
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
 from feature_extractor import FeatureOrchestrator  # Use new modularized feature orchestrator
@@ -225,6 +232,53 @@ def parse_args():
                         help='Episode number to start the dataset growth process.')
     parser.add_argument('--dataset_growth_end_episode', default=200, type=int,
                         help='Episode number to end the dataset growth process.')
+
+    # Early-Warning Guided Candidate Reranking
+    parser.add_argument('--save_candidates', action='store_true',
+                        help='Save endpoint candidates for Early-Warning probing without changing PPO training.')
+    parser.add_argument('--candidate_save_mode', default='topk',
+                        choices=['topk', 'periodic', 'topk_and_periodic'],
+                        help='Candidate saving policy.')
+    parser.add_argument('--candidate_top_k', '--top_k', dest='candidate_top_k', default=50, type=int,
+                        help='Number of endpoint-best candidates to keep in candidates.jsonl. Use <=0 to keep all.')
+    parser.add_argument('--save_every', default=None, type=int,
+                        help='Save one candidate every N endpoint evaluations in periodic modes.')
+    parser.add_argument('--candidate_dir', default=None, type=str,
+                        help='Directory for candidates, probe results, rerank outputs, and final policy metadata.')
+    parser.add_argument('--candidate_output_dir', default=None, type=str,
+                        help='Alias for --candidate_dir.')
+    parser.add_argument('--run_id', default=None, type=str,
+                        help='Run id used under results/{model}/{sparsity}/{run_id}/.')
+    parser.add_argument('--candidates_path', default=None, type=str,
+                        help='Path to candidates.jsonl for probe/rerank/compile jobs.')
+    parser.add_argument('--ew_delta', default=0.05, type=float,
+                        help='Neighboring-budget delta for Early-Warning probe.')
+    parser.add_argument('--probe_sparsity', default=None, type=float,
+                        help='Override diagnostic center sparsity. Defaults to each candidate current_sparsity.')
+    parser.add_argument('--probe_output', default=None, type=str,
+                        help='CSV path for Early-Warning probe results.')
+    parser.add_argument('--probe_jsonl_output', default=None, type=str,
+                        help='JSONL path for Early-Warning probe results.')
+    parser.add_argument('--num_shards', default=1, type=int,
+                        help='Number of candidate shards for probe jobs.')
+    parser.add_argument('--shard_id', default=0, type=int,
+                        help='Current shard id for probe jobs.')
+    parser.add_argument('--rerank_mode', default='curvature', choices=['endpoint', 'slope', 'curvature'],
+                        help='Candidate reranking mode.')
+    parser.add_argument('--lambda_ew', default=1.0, type=float,
+                        help='Penalty weight for curvature reranking.')
+    parser.add_argument('--lambda_slope', default=1.0, type=float,
+                        help='Penalty weight for slope reranking.')
+    parser.add_argument('--curvature_tau', default=0.0, type=float,
+                        help='Curvature threshold tau for max(0, curvature - tau).')
+    parser.add_argument('--rerank_output', default=None, type=str,
+                        help='CSV path for rerank results.')
+    parser.add_argument('--best_candidate_path', default=None, type=str,
+                        help='JSON path for selected best candidate.')
+    parser.add_argument('--final_sparsity', default=None, type=float,
+                        help='Final sparsity for compiling the selected candidate. Defaults to 1 - preserve_ratio.')
+    parser.add_argument('--final_policy_path', default=None, type=str,
+                        help='JSON path for the final projected policy.')
     
     return parser.parse_args()
 
@@ -242,7 +296,444 @@ def get_llm(model, cache_dir="llm_weights"):
     return model
 
 
-def train(num_episode, agent, env, output):
+def default_candidate_dir(args):
+    target_sparsity = getattr(args, "final_sparsity", None)
+    if target_sparsity is None:
+        target_sparsity = 1.0 - float(getattr(args, "preserve_ratio", 0.7))
+    run_id = getattr(args, "run_id", None)
+    if not run_id:
+        seed = getattr(args, "seed", None)
+        run_id = f"seed{seed if seed is not None else 'none'}"
+    return os.path.join(
+        "results",
+        safe_model_name(args.model_name),
+        f"sparsity_{float(target_sparsity):.2f}",
+        safe_model_name(run_id),
+        "candidates",
+    )
+
+
+def resolve_candidate_dir(args):
+    if getattr(args, "candidate_output_dir", None):
+        return args.candidate_output_dir
+    if args.candidate_dir:
+        return args.candidate_dir
+    return default_candidate_dir(args)
+
+
+def resolve_candidates_path(args):
+    if args.candidates_path:
+        return args.candidates_path
+    return os.path.join(resolve_candidate_dir(args), "candidates.jsonl")
+
+
+def resolve_probe_output(args):
+    if args.probe_output:
+        return args.probe_output
+    return os.path.join(resolve_candidate_dir(args), "probe_results.csv")
+
+
+def resolve_probe_jsonl_output(args):
+    if args.probe_jsonl_output:
+        return args.probe_jsonl_output
+    return os.path.join(resolve_candidate_dir(args), "probe_results.jsonl")
+
+
+def resolve_rerank_output(args):
+    if args.rerank_output:
+        return args.rerank_output
+    return os.path.join(resolve_candidate_dir(args), "rerank_results.csv")
+
+
+def resolve_best_candidate_path(args):
+    if args.best_candidate_path:
+        return args.best_candidate_path
+    return os.path.join(resolve_candidate_dir(args), "best_candidate.json")
+
+
+def resolve_selected_candidates_path(args):
+    return os.path.join(resolve_candidate_dir(args), "selected_candidates.json")
+
+
+def build_env_module_costs(env):
+    if env.args.prune == "para":
+        return make_module_costs(
+            env.param_list,
+            norm_costs=getattr(env, "norm_para", None),
+            dim_list=env.dim_list,
+            channel_round=env.channel_round,
+            cost_type="para",
+        )
+    return make_module_costs(
+        env.flops_list,
+        dim_list=env.dim_list,
+        channel_round=env.channel_round,
+        cost_type="flops",
+    )
+
+
+def project_candidate_score(env, score_vector, sparsity):
+    return project_score_to_policy(
+        score_vector,
+        target_sparsity=sparsity,
+        module_costs=build_env_module_costs(env),
+        p_min=env.lbound,
+        p_max=env.rbound,
+    )
+
+
+def project_candidate_score_with_metadata(env, score_vector, sparsity):
+    return project_score_to_policy(
+        score_vector,
+        target_sparsity=sparsity,
+        module_costs=build_env_module_costs(env),
+        p_min=env.lbound,
+        p_max=env.rbound,
+        return_metadata=True,
+    )
+
+
+def load_candidate_score(candidate):
+    if candidate.get("score_path"):
+        return torch.load(candidate["score_path"], map_location="cpu").detach().cpu().numpy()
+    if candidate.get("score_vector") is not None:
+        return np.asarray(candidate["score_vector"], dtype=np.float32)
+    raise ValueError(f"Candidate {candidate.get('candidate_id')} does not include score_path or score_vector")
+
+
+def evaluate_projected_policy(env, policy, checkpoint_path=None):
+    old_export_model = env.export_model
+    old_export_path = getattr(env, "export_path", None)
+    try:
+        env.reset()
+        env.export_model = True
+        if checkpoint_path is not None:
+            env.set_export_path(checkpoint_path)
+        obs, reward, done, info = env.step(list(policy))
+        if checkpoint_path is not None:
+            Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+            torch.save(env.model.state_dict(), checkpoint_path)
+        return {
+            "obs": obs,
+            "reward": reward,
+            "done": done,
+            "info": info,
+            "ppl": info.get("ppl"),
+            "policy": info.get("strategy", policy),
+        }
+    finally:
+        env.export_model = old_export_model
+        if old_export_path is not None:
+            env.set_export_path(old_export_path)
+
+
+def write_policy_json(path, candidate_id, policy, sparsity, extra=None):
+    payload = {
+        "candidate_id": candidate_id,
+        "sparsity": float(sparsity),
+        "policy": policy,
+    }
+    if extra:
+        payload.update(extra)
+    dump_json(path, payload)
+
+
+def run_probe(env, args):
+    candidates_path = resolve_candidates_path(args)
+    candidates = read_jsonl(candidates_path)
+    if not candidates:
+        raise RuntimeError(f"No candidates found in {candidates_path}")
+    candidates = candidates[: args.candidate_top_k] if args.candidate_top_k and args.candidate_top_k > 0 else candidates
+    num_shards = max(1, int(getattr(args, "num_shards", 1)))
+    shard_id = int(getattr(args, "shard_id", 0))
+    if shard_id < 0 or shard_id >= num_shards:
+        raise ValueError(f"shard_id must be in [0, {num_shards}), got {shard_id}")
+    candidates = [candidate for idx, candidate in enumerate(candidates) if idx % num_shards == shard_id]
+
+    output_path = resolve_probe_output(args)
+    jsonl_path = resolve_probe_jsonl_output(args)
+    probe_dir = Path(output_path).parent
+    policy_dir = probe_dir / "probe_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+
+    completed = set()
+    if os.path.exists(output_path):
+        for row in read_csv_rows(output_path):
+            completed.add(row["candidate_id"])
+
+    rows = []
+    delta = float(args.ew_delta)
+    for index, candidate in enumerate(candidates):
+        candidate_id = candidate.get("candidate_id", f"candidate_{index:05d}")
+        if candidate_id in completed:
+            print(f"=> Skipping already probed candidate {candidate_id}")
+            continue
+        center_sparsity = (
+            float(args.probe_sparsity)
+            if args.probe_sparsity is not None
+            else float(candidate.get("current_sparsity", 1.0 - args.preserve_ratio))
+        )
+        score_vector = load_candidate_score(candidate)
+
+        probe_values = {}
+        for tag, sparsity in (
+            ("minus", center_sparsity - delta),
+            ("zero", center_sparsity),
+            ("plus", center_sparsity + delta),
+        ):
+            sparsity = float(np.clip(sparsity, 0.0, 1.0))
+            projection = project_candidate_score_with_metadata(env, score_vector, sparsity)
+            policy = projection["policy"]
+            policy_path = policy_dir / f"{candidate_id}_{tag}.json"
+            write_policy_json(policy_path, candidate_id, policy, sparsity, {"probe_point": tag, "projection": projection})
+
+            start_time = time.time()
+            eval_result = evaluate_projected_policy(env, policy)
+            elapsed = time.time() - start_time
+            ppl = float(eval_result["ppl"])
+            logppl = math.log(ppl) if ppl and ppl > 0 else float("inf")
+
+            probe_values[tag] = {
+                "sparsity": sparsity,
+                "policy_path": str(policy_path),
+                "ppl": ppl,
+                "logppl": logppl,
+                "reward": float(eval_result["reward"]),
+                "eval_seconds": elapsed,
+                "actual_sparsity": projection["actual_sparsity"],
+                "budget_error": projection["budget_error"],
+                "relative_budget_error": projection["relative_budget_error"],
+            }
+
+        log_minus = probe_values["minus"]["logppl"]
+        log_zero = probe_values["zero"]["logppl"]
+        log_plus = probe_values["plus"]["logppl"]
+        slope = (log_plus - log_zero) / delta
+        curvature = (log_plus - 2.0 * log_zero + log_minus) / (delta ** 2)
+
+        row = {
+            "candidate_id": candidate_id,
+            "score_path": candidate.get("score_path", ""),
+            "candidate_policy_path": candidate.get("policy_path", ""),
+            "model_name": candidate.get("model_name", args.model_name),
+            "seed": candidate.get("seed", args.seed),
+            "step": candidate.get("step", ""),
+            "center_sparsity": center_sparsity,
+            "delta": delta,
+            "sparsity_minus": probe_values["minus"]["sparsity"],
+            "sparsity_zero": probe_values["zero"]["sparsity"],
+            "sparsity_plus": probe_values["plus"]["sparsity"],
+            "actual_sparsity_minus": probe_values["minus"]["actual_sparsity"],
+            "actual_sparsity_zero": probe_values["zero"]["actual_sparsity"],
+            "actual_sparsity_plus": probe_values["plus"]["actual_sparsity"],
+            "budget_error_minus": probe_values["minus"]["budget_error"],
+            "budget_error_zero": probe_values["zero"]["budget_error"],
+            "budget_error_plus": probe_values["plus"]["budget_error"],
+            "relative_budget_error_minus": probe_values["minus"]["relative_budget_error"],
+            "relative_budget_error_zero": probe_values["zero"]["relative_budget_error"],
+            "relative_budget_error_plus": probe_values["plus"]["relative_budget_error"],
+            "ppl_minus": probe_values["minus"]["ppl"],
+            "ppl_zero": probe_values["zero"]["ppl"],
+            "ppl_plus": probe_values["plus"]["ppl"],
+            "logppl_minus": log_minus,
+            "logppl_zero": log_zero,
+            "logppl_plus": log_plus,
+            "slope": slope,
+            "curvature": curvature,
+            "future_degradation": log_plus - log_zero,
+            "policy_minus_path": probe_values["minus"]["policy_path"],
+            "policy_zero_path": probe_values["zero"]["policy_path"],
+            "policy_plus_path": probe_values["plus"]["policy_path"],
+            "eval_seconds_minus": probe_values["minus"]["eval_seconds"],
+            "eval_seconds_zero": probe_values["zero"]["eval_seconds"],
+            "eval_seconds_plus": probe_values["plus"]["eval_seconds"],
+            "eval_seconds_total": (
+                probe_values["minus"]["eval_seconds"]
+                + probe_values["zero"]["eval_seconds"]
+                + probe_values["plus"]["eval_seconds"]
+            ),
+            "eval_num_samples": getattr(args, "n_samples", ""),
+            "seq_len": getattr(env.model, "seqlen", ""),
+            "gpu_id": getattr(args, "gpu_id", ""),
+            "num_shards": num_shards,
+            "shard_id": shard_id,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        rows.append(row)
+        Path(jsonl_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(jsonl_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+        print(f"=> Probed {candidate_id}: logppl0={log_zero:.4f}, curvature={curvature:.4f}")
+
+    if not rows:
+        print(f"=> No new candidates to probe for shard {shard_id}/{num_shards}")
+        return output_path
+
+    existing_rows = []
+    if os.path.exists(output_path):
+        existing_rows = read_csv_rows(output_path)
+    all_rows = existing_rows + rows
+    fieldnames = []
+    for row in all_rows:
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_rows)
+
+    print(f"=> Early-Warning probe results saved to {output_path}")
+    return output_path
+
+
+def read_csv_rows(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def float_field(row, key, default=float("nan")):
+    try:
+        return float(row.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def run_rerank(args):
+    probe_path = resolve_probe_output(args)
+    rows = read_csv_rows(probe_path)
+    if not rows:
+        raise RuntimeError(f"No probe rows found in {probe_path}")
+
+    candidates_by_id = {}
+    candidates_path = resolve_candidates_path(args)
+    if os.path.exists(candidates_path):
+        candidates_by_id = {row["candidate_id"]: row for row in read_jsonl(candidates_path)}
+
+    scored_rows = []
+    for row in rows:
+        endpoint_score = float_field(row, "logppl_zero")
+        slope_score = endpoint_score + args.lambda_ew * float_field(row, "slope")
+        curvature_penalty = max(0.0, float_field(row, "curvature") - args.curvature_tau)
+        curvature_score = endpoint_score + args.lambda_ew * curvature_penalty
+        selected_score = {
+            "endpoint": endpoint_score,
+            "slope": slope_score,
+            "curvature": curvature_score,
+        }[args.rerank_mode]
+
+        out = dict(row)
+        out.update({
+            "endpoint_score": endpoint_score,
+            "slope_score": slope_score,
+            "curvature_score": curvature_score,
+            "warning_penalty": curvature_penalty,
+            "selected_mode": args.rerank_mode,
+            "selected_score": selected_score,
+            "lambda_ew": args.lambda_ew,
+            "curvature_tau": args.curvature_tau,
+        })
+        scored_rows.append(out)
+
+    scored_rows.sort(key=lambda row: float(row["selected_score"]))
+    for rank, row in enumerate(scored_rows, start=1):
+        row["rank"] = rank
+
+    output_path = resolve_rerank_output(args)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(scored_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(scored_rows)
+
+    best = dict(scored_rows[0])
+    original_candidate = candidates_by_id.get(best["candidate_id"], {})
+    best_payload = {
+        "selected_mode": args.rerank_mode,
+        "selected_score": float(best["selected_score"]),
+        "lambda_slope": args.lambda_slope,
+        "lambda_ew": args.lambda_ew,
+        "curvature_tau": args.curvature_tau,
+        "probe_row": best,
+        "candidate": original_candidate,
+    }
+    best_path = resolve_best_candidate_path(args)
+    dump_json(best_path, best_payload)
+
+    selected_payload = {}
+    for mode, score_key in (
+        ("endpoint", "endpoint_score"),
+        ("slope", "slope_score"),
+        ("curvature", "curvature_score"),
+    ):
+        mode_best = min(scored_rows, key=lambda item: float(item[score_key]))
+        selected_payload[f"{mode}_best"] = {
+            "mode": mode,
+            "score": float(mode_best[score_key]),
+            "probe_row": mode_best,
+            "candidate": candidates_by_id.get(mode_best["candidate_id"], {}),
+        }
+    selected_path = resolve_selected_candidates_path(args)
+    dump_json(selected_path, selected_payload)
+
+    print(f"=> Rerank results saved to {output_path}")
+    print(f"=> Best candidate saved to {best_path}: {best['candidate_id']} ({args.rerank_mode})")
+    print(f"=> Selected candidates saved to {selected_path}")
+    print("=> Top 10 candidates:")
+    for row in scored_rows[:10]:
+        print(f"   rank={row['rank']} id={row['candidate_id']} score={float(row['selected_score']):.6f}")
+    return best_path
+
+
+def run_compile_best(env, args):
+    best_path = resolve_best_candidate_path(args)
+    best_payload = load_json(best_path)
+    candidate = best_payload.get("candidate") or {}
+    probe_row = best_payload.get("probe_row") or {}
+    candidate_id = candidate.get("candidate_id") or probe_row.get("candidate_id")
+
+    if not candidate.get("score_path") and probe_row.get("score_path"):
+        candidate["score_path"] = probe_row["score_path"]
+    score_vector = load_candidate_score(candidate)
+
+    final_sparsity = float(args.final_sparsity) if args.final_sparsity is not None else 1.0 - args.preserve_ratio
+    final_projection = project_candidate_score_with_metadata(env, score_vector, final_sparsity)
+    final_policy = final_projection["policy"]
+    final_policy_path = args.final_policy_path or os.path.join(resolve_candidate_dir(args), "final_policy.json")
+    write_policy_json(
+        final_policy_path,
+        candidate_id,
+        final_policy,
+        final_sparsity,
+        {"source_best_candidate": best_path, "selected_mode": best_payload.get("selected_mode")},
+    )
+
+    export_path = args.export_path or os.path.join(resolve_candidate_dir(args), "final_static_checkpoint.pth.tar")
+    print(f"=> Compiling candidate {candidate_id} at final sparsity {final_sparsity:.4f}")
+    eval_result = evaluate_projected_policy(env, final_policy, checkpoint_path=export_path)
+
+    metadata_path = os.path.splitext(export_path)[0] + ".json"
+    dump_json(metadata_path, {
+        "candidate_id": candidate_id,
+        "final_sparsity": final_sparsity,
+        "final_policy_path": final_policy_path,
+        "checkpoint_path": export_path,
+        "ppl": eval_result["ppl"],
+        "reward": eval_result["reward"],
+        "actual_sparsity": final_projection["actual_sparsity"],
+        "budget_error": final_projection["budget_error"],
+        "relative_budget_error": final_projection["relative_budget_error"],
+        "selected_mode": best_payload.get("selected_mode"),
+        "best_candidate_path": best_path,
+    })
+
+    print(f"=> Final static checkpoint saved to {export_path}")
+    print(f"=> Final metadata saved to {metadata_path}")
+    return export_path
+
+
+def train(num_episode, agent, env, output, candidate_recorder=None):
     global tfwriter, text_writer
     # ====================  ▼▼▼ 添加这个代码块 ▼▼▼ ====================
     start_episode = 0
@@ -385,7 +876,8 @@ def train(num_episode, agent, env, output):
                 
                 # Agent核心交互
                 action = agent.act(observation)
-                next_observation, reward, done, info = env.step(np.squeeze(action))
+                raw_action = np.squeeze(action)
+                next_observation, reward, done, info = env.step(raw_action)
                 
                 # 对 next_observation 进行同样的状态形状处理
                 if not args.use_new_input:
@@ -418,6 +910,42 @@ def train(num_episode, agent, env, output):
                 else: print(log_content)
                 
                 text_writer.write(log_content + '\n')
+
+                if candidate_recorder is not None:
+                    target_sparsity = 1.0 - current_preserve_ratio
+                    budget = compute_policy_budget(
+                        info.get("strategy", env.action),
+                        target_sparsity,
+                        build_env_module_costs(env),
+                    )
+                    candidate_id = "{}_seed{}_step{:06d}_ep{:06d}".format(
+                        safe_model_name(args.model_name),
+                        args.seed if args.seed is not None else "none",
+                        step,
+                        episode,
+                    )
+                    candidate_recorder.record(
+                        candidate_id=candidate_id,
+                        score_vector=raw_action,
+                        projected_policy=info.get("strategy", env.action),
+                        current_sparsity=target_sparsity,
+                        target_sparsity=target_sparsity,
+                        actual_sparsity=budget["actual_sparsity"],
+                        budget_error=budget["budget_error"],
+                        relative_budget_error=budget["relative_budget_error"],
+                        endpoint_ppl=info.get("ppl", float("nan")),
+                        endpoint_reward=reward,
+                        step=step,
+                        seed=args.seed,
+                        model_name=args.model_name,
+                        config=vars(args),
+                        extra={
+                            "episode": episode,
+                            "compress_ratio": info.get("compress_ratio"),
+                            "para_ratio": info.get("para_ratio"),
+                            "output_dir": output,
+                        },
+                    )
                 
                 if is_best:
                     env.best_reward = reward
@@ -441,6 +969,7 @@ def train(num_episode, agent, env, output):
                 episode_steps = 0
                 episode_reward = 0.
                 episode += 1
+                step += 1
 
                 if summary is not None:
                     for k, v in summary.items(): tfwriter.add_scalar(k, v, episode)
@@ -643,6 +1172,10 @@ if __name__ == "__main__":
         args.use_new_input = False
         print("=> State Mode 0: 使用全局剪枝率状态")
 
+    if args.job == 'rerank':
+        run_rerank(args)
+        sys.exit(0)
+
     if args.structure:
         env = ChannelPruningEnv(args.model, args.dataset_name,
                                 preserve_ratio=1. if args.job == 'export' else args.preserve_ratio,
@@ -740,6 +1273,18 @@ if __name__ == "__main__":
         text_writer = open(os.path.join(args.output, 'log.txt'), 'w')
         print('=> Output path: {}...'.format(args.output))
 
+        candidate_recorder = None
+        if args.save_candidates:
+            candidate_dir = resolve_candidate_dir(args)
+            candidate_recorder = CandidateRecorder(
+                candidate_dir,
+                top_k=args.candidate_top_k,
+                save_mode=args.candidate_save_mode,
+                save_every=args.save_every,
+                run_config=vars(args),
+            )
+            print(f"=> Saving Early-Warning candidates to {candidate_dir}")
+
         # 1. 从环境中动态获取正确的状态维度
         nb_states = env.state_dim
         print(f"=> Correct state dimension from environment: {nb_states}")
@@ -764,9 +1309,17 @@ if __name__ == "__main__":
         # critic_mem = get_tensor_memory(agent.critic)
         # print(f">>> Breakdown: RL Agent parameters (Actor: {actor_mem:.2f} MiB, Critic: {critic_mem:.2f} MiB)")
     
-        train(args.train_episode, agent, env, args.output)
+        train(args.train_episode, agent, env, args.output, candidate_recorder=candidate_recorder)
 
     elif args.job == 'export':
         export_model(env, args)
+    elif args.job == 'probe':
+        run_probe(env, args)
+    elif args.job == 'compile':
+        run_compile_best(env, args)
+    elif args.job == 'ew_pipeline':
+        run_probe(env, args)
+        run_rerank(args)
+        run_compile_best(env, args)
     else:
         raise RuntimeError('Undefined job {}'.format(args.job))

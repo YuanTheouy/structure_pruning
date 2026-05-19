@@ -198,6 +198,7 @@ from scipy.spatial import distance
 from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaTokenizer, AutoConfig, OPTForCausalLM
 # from sklearn.linear_model import Ridge
 from env.rewards import *
+from lib.ew_projector import make_module_costs, project_score_to_policy
 import math
 from tqdm import tqdm
 
@@ -1312,96 +1313,29 @@ class ChannelPruningEnv:
         if self.export_model:
             return action
 
-        # 1. 基础处理
-        actions = np.abs(action)
-        actions = np.clip(actions, self.lbound, self.rbound)
-
-        # 辅助函数：根据比例计算总计算量
-        def get_computation(ratios):
-            computation = 0
-            num_layers = len(self.param_list)
-            if self.args.prune == 'para':
-                for i in range(num_layers):
-                    computation += ratios[i] * (self.param_list[i] - self.norm_para[i]) + self.norm_para[i]
-            else: # flops
-                for i in range(num_layers):
-                    computation += ratios[i] * self.flops_list[i]
-            return computation
-
-        current_computation = get_computation(actions)
-        target_computation = self.expected_preserve_computation
-
-        # 2. 双向调节 (浮点数层面)
-        if current_computation < target_computation: # 智能放大
-            deficit = target_computation - current_computation
-            unsaturated_indices = [i for i, r in enumerate(actions) if r < self.rbound]
-            if unsaturated_indices:
-                cost_list = self.param_list if self.args.prune == 'para' else self.flops_list
-                comp_headrooms = []
-                for i in unsaturated_indices:
-                    ratio_headroom = self.rbound - actions[i]
-                    cost = (self.param_list[i] - self.norm_para[i]) if self.args.prune == 'para' else self.flops_list[i]
-                    comp_headrooms.append(ratio_headroom * cost)
-
-                total_comp_headroom = sum(comp_headrooms)
-                if total_comp_headroom > 1e-6:
-                    for i, original_idx in enumerate(unsaturated_indices):
-                        comp_to_add = deficit * (comp_headrooms[i] / total_comp_headroom)
-                        cost = (self.param_list[original_idx] - self.norm_para[original_idx]) if self.args.prune == 'para' else self.flops_list[original_idx]
-                        if cost > 1e-6:
-                            actions[original_idx] += comp_to_add / cost
-                    actions = np.clip(actions, self.lbound, self.rbound)
-
-        elif current_computation > target_computation: # 序贯缩小
-            for idx in range(len(actions)):
-                other_comp, this_comp = 0, 0
-                for i in range(len(actions)):
-                    cost = (self.param_list[i] - self.norm_para[i]) if self.args.prune == 'para' else self.flops_list[i]
-                    norm_cost = self.norm_para[i] if self.args.prune == 'para' else 0
-                    if i == idx: this_comp += self.param_list[i] if self.args.prune == 'para' else self.flops_list[i]
-                    elif i < idx: other_comp += actions[i] * cost + norm_cost
-                    else: other_comp += self.lbound * cost + norm_cost
-                
-                if this_comp > 1e-6:
-                    max_preserve_ratio = (target_computation - other_comp) / this_comp
-                    actions[idx] = np.minimum(actions[idx], max_preserve_ratio)
-                    actions[idx] = np.maximum(actions[idx], self.lbound)
-
-        # 3. 通道取整 (这是导致超预算的根源)
-        d_primes = [max(1, int(np.around(r * d))) for r, d in zip(actions, self.dim_list)]
-        if self.channel_round > 0:
-            d_primes = [min(d_dim, int(np.ceil(d_p / self.channel_round) * self.channel_round)) for d_p, d_dim in zip(d_primes, self.dim_list)]
-        
-        actions_rounded = [d_p / d_dim if d_dim > 0 else 0 for d_p, d_dim in zip(d_primes, self.dim_list)]
-        
-        # --- 4. 最终预算修正：处理因向上取整导致的微小超支 ---
-        rounded_computation = get_computation(actions_rounded)
-        overshoot = rounded_computation - target_computation
-
-        if overshoot > 0:
-            # 从后向前，贪婪地削减那些可以削减的层的通道数，直到满足预算
-            cost_list = self.param_list if self.args.prune == 'para' else self.flops_list
-            for i in range(len(actions_rounded) - 1, -1, -1):
-                if overshoot <= 0: break
-                
-                # 计算减去一个 rounding step 能节省多少计算量
-                if self.dim_list[i] > 0 and self.channel_round > 0:
-                    cost_per_channel_unit = cost_list[i] / self.dim_list[i]
-                    cost_per_round_step = cost_per_channel_unit * self.channel_round
-                    
-                    # 检查削减后是否会低于 lbound
-                    min_d_prime = max(1, int(np.around(self.lbound * self.dim_list[i])))
-                    
-                    while d_primes[i] > min_d_prime and overshoot > 0:
-                        d_primes[i] -= self.channel_round
-                        overshoot -= cost_per_round_step
-
-            # 根据最终的 d_primes 重新计算 actions
-            actions_final = [d_p / d_dim if d_dim > 0 else 0 for d_p, d_dim in zip(d_primes, self.dim_list)]
+        if self.args.prune == 'para':
+            module_costs = make_module_costs(
+                self.param_list,
+                norm_costs=self.norm_para,
+                dim_list=self.dim_list,
+                channel_round=self.channel_round,
+                cost_type="para",
+            )
         else:
-            actions_final = actions_rounded
+            module_costs = make_module_costs(
+                self.flops_list,
+                dim_list=self.dim_list,
+                channel_round=self.channel_round,
+                cost_type="flops",
+            )
 
-        return list(actions_final)
+        return project_score_to_policy(
+            action,
+            sparsity=1.0 - self.preserve_ratio,
+            module_costs=module_costs,
+            p_min=self.lbound,
+            p_max=self.rbound,
+        )
 
     def _cur_flops(self, actions):
         flops = 0
@@ -1976,4 +1910,3 @@ class ChannelPruningEnv:
         
         print(f"=> Final state assembled in env. Shape: {self.state.shape}")
         print(f"=> Environment state_dim correctly set to: {self.state_dim}")
-
