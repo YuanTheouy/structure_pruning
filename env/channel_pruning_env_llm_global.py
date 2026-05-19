@@ -195,7 +195,7 @@ from lib.linalg import lsmr_cupy_solver
 from lib.mac import mac_per_head, mac_per_neuron, get_layer_param, get_norm_param
 from scipy.spatial import distance
 # import matplotlib.pyplot as plt
-from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaTokenizer, AutoConfig, OPTForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, OPTForCausalLM
 # from sklearn.linear_model import Ridge
 from env.rewards import *
 from lib.ew_projector import make_module_costs, project_score_to_policy
@@ -463,14 +463,11 @@ class ChannelPruningEnv:
 
     def _get_model(self):
         self._get_model_local()
-        if "opt" in self.args.model:
+        model_key = str(self.args.model).lower()
+        if any(name in model_key for name in ("opt", "llama", "qwen")):
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
-        elif "llama-3" in self.args.model:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
-        elif "llama" in self.args.model:
-            self.tokenizer = LlamaTokenizer.from_pretrained(self.model_path, use_fast=False)
-        elif "qwen" or "Qwen" in self.args.model: # 为 Qwen 添加分支
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False, trust_remote_code=True)
 
 
     def _get_model_local(self, verbose=True):

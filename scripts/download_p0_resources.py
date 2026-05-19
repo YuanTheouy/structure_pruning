@@ -16,14 +16,19 @@ from datasets import DatasetDict, load_dataset
 from huggingface_hub import snapshot_download
 
 
+DEFAULT_MODEL_NAME = "TinyLlama-1.1B-Chat-v1.0"
+DEFAULT_MODELSCOPE_MODEL_ID = "AI-ModelScope/TinyLlama-1.1B-Chat-v1.0"
+DEFAULT_HF_MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download OPT/WikiText-2 resources for Early-Warning P0.")
+    parser = argparse.ArgumentParser(description="Download TinyLlama/WikiText-2 resources for Early-Warning P0.")
     parser.add_argument("--provider", choices=["modelscope", "huggingface"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
     parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "modelscope"))
-    parser.add_argument("--model_id", default=os.environ.get("MODEL_ID", "facebook/opt-2.7b"))
+    parser.add_argument("--model_id", default=os.environ.get("MODEL_ID"))
     parser.add_argument("--modelscope_model_id", default=os.environ.get("MODELSCOPE_MODEL_ID"))
-    parser.add_argument("--hf_model_id", default=os.environ.get("HF_MODEL_ID", "facebook/opt-2.7b"))
-    parser.add_argument("--model_dir", default="/workspace/Models/opt-2.7b")
+    parser.add_argument("--hf_model_id", default=os.environ.get("HF_MODEL_ID"))
+    parser.add_argument("--model_dir", default=os.environ.get("MODEL_DIR", f"/workspace/Models/{DEFAULT_MODEL_NAME}"))
     parser.add_argument("--model_revision", default=None)
     parser.add_argument("--dataset_id", default=os.environ.get("DATASET_ID", "modelscope/wikitext"))
     parser.add_argument("--hf_dataset_id", default=os.environ.get("HF_DATASET_ID", "Salesforce/wikitext"))
@@ -42,6 +47,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def effective_model_id(args: argparse.Namespace, provider: str | None = None) -> str:
+    provider = provider or args.provider
+    if provider == "huggingface":
+        return args.hf_model_id or args.model_id or DEFAULT_HF_MODEL_ID
+    return args.modelscope_model_id or args.model_id or DEFAULT_MODELSCOPE_MODEL_ID
+
+
 def is_nonempty_dir(path: Path) -> bool:
     return path.exists() and path.is_dir() and any(path.iterdir())
 
@@ -49,7 +61,7 @@ def is_nonempty_dir(path: Path) -> bool:
 def download_model_huggingface(args: argparse.Namespace) -> str:
     model_dir = Path(args.model_dir).expanduser()
     model_dir.parent.mkdir(parents=True, exist_ok=True)
-    model_id = args.hf_model_id or args.model_id
+    model_id = effective_model_id(args, "huggingface")
     print(f"=> Downloading Hugging Face model {model_id} to {model_dir}")
     return snapshot_download(
         repo_id=model_id,
@@ -70,7 +82,7 @@ def download_model_modelscope(args: argparse.Namespace) -> str:
 def download_model_modelscope_cli(args: argparse.Namespace) -> str:
     model_dir = Path(args.model_dir).expanduser()
     model_dir.parent.mkdir(parents=True, exist_ok=True)
-    model_id = args.modelscope_model_id or args.model_id
+    model_id = effective_model_id(args, "modelscope")
 
     cli = shutil.which("modelscope")
     if not cli:
@@ -114,7 +126,7 @@ def download_model_modelscope_sdk(args: argparse.Namespace) -> str:
 
     model_dir = Path(args.model_dir).expanduser()
     model_dir.parent.mkdir(parents=True, exist_ok=True)
-    model_id = args.modelscope_model_id or args.model_id
+    model_id = effective_model_id(args, "modelscope")
     print(f"=> Downloading ModelScope model {model_id} to {model_dir} with SDK", flush=True)
     kwargs = {
         "revision": args.model_revision,
@@ -226,11 +238,6 @@ def download_wikitext2(args: argparse.Namespace) -> Path:
 
 def main() -> int:
     args = parse_args()
-    effective_model_id = (
-        (args.modelscope_model_id or args.model_id)
-        if args.provider == "modelscope"
-        else (args.hf_model_id or args.model_id)
-    )
     effective_dataset_id = (
         (args.modelscope_dataset_id or args.dataset_id)
         if args.dataset_provider == "modelscope"
@@ -239,7 +246,7 @@ def main() -> int:
     manifest = {
         "provider": args.provider,
         "dataset_provider": args.dataset_provider,
-        "model_id": effective_model_id,
+        "model_id": effective_model_id(args),
         "model_dir": args.model_dir,
         "dataset_id": effective_dataset_id,
         "dataset_config": args.dataset_config,
