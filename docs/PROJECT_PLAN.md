@@ -178,6 +178,82 @@ Record these after each run:
 - Selected candidate JSON: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/selected_candidates.json`
 - Best candidate JSON: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/best_candidate.json`
 
+### Observed P0 Smoke-Test Artifacts
+
+Run observed on 2026-05-19 with:
+
+- Model: `opt-2.7b`
+- Dataset: `wikitext2`
+- Target sparsity: `0.30`
+- Delta: `0.05`
+- GPU IDs: `0 1 2 3 4 5 6 7`
+- PPO budget: `TRAIN_EPISODES=80`, `EPISODES_PER_WORKER=10`
+- Candidate top-k: `8`
+- Probe samples: `N_SAMPLES=8`
+- PPO inner loop: `NUM_COLLECT=5`, `LEARNING_EPOCH=3`
+- Seeds: `2025` through `2032`
+
+Observed candidate-generation summary:
+
+```text
+Merged 58 candidates from 8 pools
+Wrote 8 selected candidates to /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates/candidates/candidates.jsonl
+```
+
+Observed file counts:
+
+```text
+8 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates/candidates/candidates.jsonl
+9 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/probe_results.csv
+```
+
+Observed early-warning output summary:
+
+```text
+Merged 8 probe rows into /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/probe_results.csv
+Wrote /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/rerank_results.csv
+Wrote /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/best_candidate.json
+Wrote /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/selected_candidates.json
+```
+
+Observed top candidate from `best_candidate.json`:
+
+```text
+candidate_id: p0_candidates_parallel_gpu2_opt-2.7b_seed2027_step000000_ep000000
+selected_mode: curvature
+selection_score: 5.938169465710291
+endpoint_logppl from candidate record: 5.713615864981652
+endpoint_ppl from candidate record: 302.9645690917969
+probe logppl_minus: 5.181026925382635
+probe logppl_zero: 5.938169465710291
+probe logppl_plus: 6.468749987255017
+probe ppl_minus: 177.86537170410156
+probe ppl_zero: 379.2400817871094
+probe ppl_plus: 644.6773681640625
+slope: 10.611610430894522
+curvature: -90.62480751317209
+future_degradation: 0.5305805215447261
+actual_sparsity_minus: 0.2501126329304517
+actual_sparsity_zero: 0.3005624973626173
+actual_sparsity_plus: 0.350333810748619
+probe eval seconds total: 144.03351759910583
+```
+
+Top-8 rerank order reported by the smoke test:
+
+```text
+rank=1 id=p0_candidates_parallel_gpu2_opt-2.7b_seed2027_step000000_ep000000 score=5.938169
+rank=2 id=p0_candidates_parallel_gpu0_opt-2.7b_seed2025_step000009_ep000009 score=6.422321
+rank=3 id=p0_candidates_parallel_gpu0_opt-2.7b_seed2025_step000001_ep000001 score=6.508482
+rank=4 id=p0_candidates_parallel_gpu2_opt-2.7b_seed2027_step000009_ep000009 score=6.856250
+rank=5 id=p0_candidates_parallel_gpu5_opt-2.7b_seed2030_step000001_ep000001 score=64.010385
+rank=6 id=p0_candidates_parallel_gpu0_opt-2.7b_seed2025_step000004_ep000004 score=137.143111
+rank=7 id=p0_candidates_parallel_gpu7_opt-2.7b_seed2032_step000009_ep000009 score=341.656157
+rank=8 id=p0_candidates_parallel_gpu4_opt-2.7b_seed2029_step000004_ep000004 score=434.800688
+```
+
+Interpretation guardrail: this is only a smoke-test artifact proving that the pipeline can produce candidates, probe rows, and rerank outputs. It is too small for a manuscript claim because it uses only 8 probe samples and 10 PPO episodes per worker.
+
 ## Minimum Manuscript Tables To Fill
 
 | Table/Figure | Required File Artifact |
