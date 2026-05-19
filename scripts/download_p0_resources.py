@@ -7,6 +7,8 @@ import argparse
 import inspect
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset_dir", default="/workspace/datasets/wikitext/wikitext-2-raw-v1")
     parser.add_argument("--cache_dir", default=os.environ.get("HF_HOME", "/workspace/datasets/.cache/huggingface"))
     parser.add_argument("--modelscope_cache_dir", default=os.environ.get("MODELSCOPE_CACHE", "/workspace/datasets/.cache/modelscope"))
+    parser.add_argument("--modelscope_backend", choices=["cli", "sdk"], default=os.environ.get("MODELSCOPE_BACKEND", "cli"))
     parser.add_argument("--manifest_path", default="/workspace/ckpts/resource_manifest.json")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--modelscope_token", default=os.environ.get("MODELSCOPE_TOKEN"))
@@ -59,12 +62,60 @@ def download_model_huggingface(args: argparse.Namespace) -> str:
 
 
 def download_model_modelscope(args: argparse.Namespace) -> str:
+    if args.modelscope_backend == "cli":
+        return download_model_modelscope_cli(args)
+    return download_model_modelscope_sdk(args)
+
+
+def download_model_modelscope_cli(args: argparse.Namespace) -> str:
+    model_dir = Path(args.model_dir).expanduser()
+    model_dir.parent.mkdir(parents=True, exist_ok=True)
+    model_id = args.modelscope_model_id or args.model_id
+
+    cli = shutil.which("modelscope")
+    if not cli:
+        raise RuntimeError("modelscope CLI is not available on PATH")
+
+    cmd = [
+        cli,
+        "download",
+        "--model",
+        model_id,
+        "--local_dir",
+        str(model_dir),
+        "--cache_dir",
+        args.modelscope_cache_dir,
+        "--exclude",
+        "*.h5",
+        "*.msgpack",
+        "*.ot",
+    ]
+    if args.model_revision:
+        cmd.extend(["--revision", args.model_revision])
+    env = os.environ.copy()
+    if args.modelscope_token:
+        env["MODELSCOPE_TOKEN"] = args.modelscope_token
+
+    print(f"=> Downloading ModelScope model {model_id} to {model_dir} with CLI progress", flush=True)
+    print("=> " + " ".join(cmd), flush=True)
+    proc = subprocess.Popen(cmd, env=env)
+    try:
+        return_code = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        raise
+    if return_code != 0:
+        raise RuntimeError(f"modelscope CLI exited with code {return_code}")
+    return str(model_dir)
+
+
+def download_model_modelscope_sdk(args: argparse.Namespace) -> str:
     from modelscope import snapshot_download as ms_snapshot_download
 
     model_dir = Path(args.model_dir).expanduser()
     model_dir.parent.mkdir(parents=True, exist_ok=True)
     model_id = args.modelscope_model_id or args.model_id
-    print(f"=> Downloading ModelScope model {model_id} to {model_dir}")
+    print(f"=> Downloading ModelScope model {model_id} to {model_dir} with SDK", flush=True)
     kwargs = {
         "revision": args.model_revision,
         "local_dir": str(model_dir),
