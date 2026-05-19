@@ -42,6 +42,7 @@ HF_WEIGHT_PATTERNS = (
     "pytorch_model*.bin",
     "*.bin",
 )
+DEFAULT_CKPT_ROOT = "/workspace/ckpts"
 
 
 def env_default(name: str, default: str | None = None) -> str | None:
@@ -73,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=env_default("DATASET", "wikitext2"))
     parser.add_argument(
         "--wikitext2_path",
-        default=env_default("WIKITEXT2_PATH", "dataset/wikitext/wikitext-2-raw-v1"),
+        default=env_default("WIKITEXT2_PATH", "/workspace/datasets/wikitext/wikitext-2-raw-v1"),
         help="Local WikiText-2 path consumed through WIKITEXT2_PATH.",
     )
     parser.add_argument("--num_samples", type=int, default=int(env_default("N_SAMPLES", "32")))
@@ -86,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tau", type=float, default=float(env_default("TAU", "0.0")))
     parser.add_argument("--rerank_mode", choices=("endpoint", "slope", "curvature"), default="curvature")
     parser.add_argument("--output_dir", default=env_default("OUTPUT_DIR"))
+    parser.add_argument("--ckpt_root", default=env_default("CKPT_ROOT", DEFAULT_CKPT_ROOT))
     parser.add_argument("--run_id", default=env_default("RUN_ID"))
     parser.add_argument("--train_episodes", type=int, default=int(env_default("TRAIN_EPISODES", "5000")))
     parser.add_argument("--check_only", action="store_true", help="Only inventory resources and print commands.")
@@ -303,7 +305,7 @@ def inspect_dataset(args: argparse.Namespace, root: Path) -> tuple[dict[str, Any
         if not dataset_path or not dataset_path.exists():
             message = (
                 "WikiText-2 local path missing. lib/data.py reads WIKITEXT2_PATH "
-                f"or defaults to dataset/wikitext/wikitext-2-raw-v1; got {dataset_path}."
+                f"or the configured --wikitext2_path; got {dataset_path}."
             )
             if args.allow_dataset_download:
                 warnings.append(message + " Continuing because --allow_dataset_download is set.")
@@ -497,7 +499,11 @@ def build_self_command(args: argparse.Namespace, root: Path, candidate_dir: Path
 def build_candidate_generation_command(args: argparse.Namespace, root: Path, candidate_dir: Path | None) -> list[str]:
     model_value = args.model or "/path/to/model"
     model_name = args.model_name or (Path(model_value).name if model_value != "/path/to/model" else "MODEL_NAME")
-    candidate_value = str(candidate_dir) if candidate_dir else "results/${MODEL_NAME}/sparsity_0.30/p0_candidates/candidates"
+    candidate_value = (
+        str(candidate_dir)
+        if candidate_dir
+        else str(Path(args.ckpt_root) / model_name / f"sparsity_{args.sigma:.2f}" / "p0_candidates" / "candidates")
+    )
     preserve_ratio = 1.0 - args.sigma
     return [
         sys.executable,
@@ -624,7 +630,11 @@ def main() -> int:
     candidate_dir = resolve_path(candidate_info.get("resolved"), root)
     output_dir = resolve_path(args.output_dir, root)
     if output_dir is None:
-        output_dir = candidate_dir if candidate_dir and candidate_dir.exists() else root / "results" / "ew_p0_minimal" / run_id
+        output_dir = (
+            candidate_dir
+            if candidate_dir and candidate_dir.exists()
+            else Path(args.ckpt_root) / "ew_p0_minimal" / run_id
+        )
 
     model_info, model_blockers, model_warnings = inspect_model(args, root)
     dataset_info, dataset_blockers, dataset_warnings = inspect_dataset(args, root)
@@ -659,6 +669,7 @@ def main() -> int:
             "gpu_id": args.gpu_id,
             "num_shards": args.num_shards,
             "shard_id": args.shard_id,
+            "ckpt_root": args.ckpt_root,
         },
         "candidate_pool": candidate_info,
         "model": model_info,

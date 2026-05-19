@@ -15,12 +15,13 @@ from huggingface_hub import snapshot_download
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download OPT/WikiText-2 resources for Early-Warning P0.")
     parser.add_argument("--model_id", default="facebook/opt-2.7b")
-    parser.add_argument("--model_dir", default="/home/lisiqi/amc-LLM/model/opt-2.7b")
+    parser.add_argument("--model_dir", default="/workspace/Models/opt-2.7b")
     parser.add_argument("--model_revision", default=None)
     parser.add_argument("--dataset_id", default="Salesforce/wikitext")
     parser.add_argument("--dataset_config", default="wikitext-2-raw-v1")
-    parser.add_argument("--dataset_dir", default="dataset/wikitext/wikitext-2-raw-v1")
-    parser.add_argument("--cache_dir", default=os.environ.get("HF_HOME"))
+    parser.add_argument("--dataset_dir", default="/workspace/datasets/wikitext/wikitext-2-raw-v1")
+    parser.add_argument("--cache_dir", default=os.environ.get("HF_HOME", "/workspace/datasets/.cache/huggingface"))
+    parser.add_argument("--manifest_path", default="/workspace/ckpts/resource_manifest.json")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--skip_model", action="store_true")
     parser.add_argument("--skip_dataset", action="store_true")
@@ -85,7 +86,8 @@ def main() -> int:
     if not args.skip_dataset:
         manifest["dataset_path"] = str(download_wikitext2(args))
 
-    manifest_path = Path("resource_manifest.json")
+    manifest_path = Path(args.manifest_path).expanduser()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with manifest_path.open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, sort_keys=True)
         handle.write("\n")

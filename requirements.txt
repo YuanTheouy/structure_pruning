@@ -7,16 +7,15 @@
 #   python -m pip install -r requirements.txt
 #
 # Notes:
-# - PyTorch is pinned to the CUDA 12.1 wheel index because A100 clusters with
-#   CUDA 12.x drivers can run it reliably. If your server is CUDA 11.8-only,
-#   replace the torch line with torch==2.4.1+cu118 and change the index URL to
-#   https://download.pytorch.org/whl/cu118.
+# - On some clusters the pip mirror already serves the correct torch CUDA
+#   build. If torch.cuda.is_available() is false after install, reinstall torch
+#   from the matching PyTorch CUDA wheel index.
 # - CuPy must match the CUDA major version. For CUDA 11.x, replace
 #   cupy-cuda12x with cupy-cuda11x.
 
---extra-index-url https://download.pytorch.org/whl/cu121
+# --extra-index-url https://download.pytorch.org/whl/cu121
 
-torch==2.4.1+cu121
+torch==2.4.1
 
 # Hugging Face model/data stack.
 transformers>=4.40.0,<4.46.0

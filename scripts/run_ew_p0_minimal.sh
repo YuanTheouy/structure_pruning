@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+PYTHON_BIN=${PYTHON:-"python3"}
+MODEL=${MODEL:-"/workspace/Models/opt-2.7b"}
+MODEL_NAME=${MODEL_NAME:-"opt-2.7b"}
+WIKITEXT2_PATH=${WIKITEXT2_PATH:-"/workspace/datasets/wikitext/wikitext-2-raw-v1"}
+WIKITEXT2_CONFIG=${WIKITEXT2_CONFIG:-"wikitext-2-raw-v1"}
 TARGET_SPARSITY=${TARGET_SPARSITY:-"0.30"}
 DELTA=${DELTA:-"0.05"}
 TOP_K=${TOP_K:-"20"}
@@ -13,12 +18,18 @@ NUM_SHARDS=${NUM_SHARDS:-"1"}
 SHARD_ID=${SHARD_ID:-"0"}
 LAMBDA_EW=${LAMBDA_EW:-"1.0"}
 TAU=${TAU:-"0.0"}
+CKPT_ROOT=${CKPT_ROOT:-"/workspace/ckpts"}
+CANDIDATE_DIR=${CANDIDATE_DIR:-"${CKPT_ROOT}/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/p0_candidates/candidates"}
+OUTPUT_DIR=${OUTPUT_DIR:-"${CKPT_ROOT}/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/p0_ew"}
 
 ARGS=(
+  --model "${MODEL}"
+  --model_name "${MODEL_NAME}"
   --sigma "${TARGET_SPARSITY}"
   --delta "${DELTA}"
   --top_k "${TOP_K}"
   --dataset "${DATASET}"
+  --wikitext2_path "${WIKITEXT2_PATH}"
   --num_samples "${N_SAMPLES}"
   --batch_size "${BATCH_SIZE}"
   --seed "${SEED}"
@@ -27,25 +38,13 @@ ARGS=(
   --shard_id "${SHARD_ID}"
   --lambda_ew "${LAMBDA_EW}"
   --tau "${TAU}"
+  --ckpt_root "${CKPT_ROOT}"
+  --candidate_dir "${CANDIDATE_DIR}"
+  --output_dir "${OUTPUT_DIR}"
 )
 
-if [ -n "${MODEL:-}" ]; then
-  ARGS+=(--model "${MODEL}")
-fi
-if [ -n "${MODEL_NAME:-}" ]; then
-  ARGS+=(--model_name "${MODEL_NAME}")
-fi
-if [ -n "${CANDIDATE_DIR:-}" ]; then
-  ARGS+=(--candidate_dir "${CANDIDATE_DIR}")
-fi
-if [ -n "${OUTPUT_DIR:-}" ]; then
-  ARGS+=(--output_dir "${OUTPUT_DIR}")
-fi
-if [ -n "${WIKITEXT2_PATH:-}" ]; then
-  ARGS+=(--wikitext2_path "${WIKITEXT2_PATH}")
-fi
 if [ -n "${RUN_ID:-}" ]; then
   ARGS+=(--run_id "${RUN_ID}")
 fi
 
-python -u ew_p0_minimal.py "${ARGS[@]}" "$@"
+"${PYTHON_BIN}" -u ew_p0_minimal.py "${ARGS[@]}" "$@"
