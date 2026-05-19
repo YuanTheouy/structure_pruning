@@ -4,7 +4,7 @@ import numpy as np
 import os
 import random
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 
 # Set seed for reproducibility
 def set_seed(seed):
@@ -17,6 +17,22 @@ class TokenizerWrapper:
         self.input_ids = input_ids
 
 # Load and process wikitext2 dataset
+def _load_wikitext2_split(split):
+    wikitext2_path = os.environ.get("WIKITEXT2_PATH", "dataset/wikitext/wikitext-2-raw-v1")
+    wikitext2_config = os.environ.get("WIKITEXT2_CONFIG", "wikitext-2-raw-v1")
+
+    if os.path.exists(wikitext2_path):
+        if (
+            os.path.exists(os.path.join(wikitext2_path, "dataset_dict.json"))
+            or os.path.exists(os.path.join(wikitext2_path, "state.json"))
+        ):
+            dataset = load_from_disk(wikitext2_path)
+            return dataset[split] if hasattr(dataset, "keys") and split in dataset.keys() else dataset
+        return load_dataset(path=wikitext2_path, split=split)
+
+    return load_dataset(path=wikitext2_path, name=wikitext2_config, split=split)
+
+
 def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     # Load train and test datasets
 
@@ -29,9 +45,8 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     # # 保存至本地
     # dataset.save_to_disk('./huggingface/hub/datasets/chn_senti_corp')
 
-    wikitext2_path = os.environ.get("WIKITEXT2_PATH", "dataset/wikitext/wikitext-2-raw-v1")
-    traindata = load_dataset(path=wikitext2_path, split='train')
-    testdata = load_dataset(path=wikitext2_path, split='test')
+    traindata = _load_wikitext2_split('train')
+    testdata = _load_wikitext2_split('test')
 
     # Encode datasets
     trainenc = tokenizer(" ".join(traindata['text']), return_tensors='pt')
