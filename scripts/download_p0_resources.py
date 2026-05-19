@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_MODEL_NAME = "OPT-2.7B-Nerys-v2"
-DEFAULT_MODEL_ID = "KoboldAI/OPT-2.7B-Nerys-v2"
+DEFAULT_MODEL_NAME = "Qwen2.5-1.5B"
+DEFAULT_MODEL_ID = "qwen/Qwen2.5-1.5B"
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download OPT/WikiText-2 resources for Early-Warning P0.")
+    parser = argparse.ArgumentParser(description="Download Qwen2.5/WikiText-2 resources for Early-Warning P0.")
     parser.add_argument("--provider", choices=["modelscope", "huggingface"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
     parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "modelscope"))
     parser.add_argument("--model_id", default=os.environ.get("MODEL_ID"))

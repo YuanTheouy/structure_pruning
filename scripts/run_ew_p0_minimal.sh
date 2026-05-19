@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTHON_BIN=${PYTHON:-"python3"}
-MODEL_NAME=${MODEL_NAME:-"OPT-2.7B-Nerys-v2"}
+MODEL_NAME=${MODEL_NAME:-"Qwen2.5-1.5B"}
 MODEL=${MODEL:-"/workspace/Models/${MODEL_NAME}"}
 WIKITEXT2_PATH=${WIKITEXT2_PATH:-"/workspace/datasets/wikitext/wikitext-2-raw-v1"}
 WIKITEXT2_CONFIG=${WIKITEXT2_CONFIG:-"wikitext-2-raw-v1"}
