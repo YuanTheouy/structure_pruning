@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTHON_BIN=${PYTHON:-"python3"}
-MODEL_NAME=${MODEL_NAME:-"TinyLlama-1.1B-Chat-v1.0"}
+MODEL_NAME=${MODEL_NAME:-"opt-2.7b"}
 MODEL=${MODEL:-"/workspace/Models/${MODEL_NAME}"}
 WIKITEXT2_PATH=${WIKITEXT2_PATH:-"/workspace/datasets/wikitext/wikitext-2-raw-v1"}
 WIKITEXT2_CONFIG=${WIKITEXT2_CONFIG:-"wikitext-2-raw-v1"}

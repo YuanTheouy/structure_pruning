@@ -12,23 +12,21 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from datasets import DatasetDict, load_dataset
-from huggingface_hub import snapshot_download
 
-
-DEFAULT_MODEL_NAME = "TinyLlama-1.1B-Chat-v1.0"
-DEFAULT_MODELSCOPE_MODEL_ID = "AI-ModelScope/TinyLlama-1.1B-Chat-v1.0"
-DEFAULT_HF_MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+DEFAULT_MODEL_NAME = "opt-2.7b"
+DEFAULT_MODEL_ID = "facebook/opt-2.7b"
+DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download TinyLlama/WikiText-2 resources for Early-Warning P0.")
-    parser.add_argument("--provider", choices=["modelscope", "huggingface"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
-    parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "modelscope"))
+    parser = argparse.ArgumentParser(description="Download OPT/WikiText-2 resources for Early-Warning P0.")
+    parser.add_argument("--provider", choices=["modelscope", "huggingface"], default=os.environ.get("DOWNLOAD_PROVIDER", "huggingface"))
+    parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "huggingface"))
     parser.add_argument("--model_id", default=os.environ.get("MODEL_ID"))
     parser.add_argument("--modelscope_model_id", default=os.environ.get("MODELSCOPE_MODEL_ID"))
     parser.add_argument("--hf_model_id", default=os.environ.get("HF_MODEL_ID"))
     parser.add_argument("--model_dir", default=os.environ.get("MODEL_DIR", f"/workspace/Models/{DEFAULT_MODEL_NAME}"))
+    parser.add_argument("--hf_endpoint", default=os.environ.get("HF_ENDPOINT", DEFAULT_HF_ENDPOINT))
     parser.add_argument("--model_revision", default=None)
     parser.add_argument("--dataset_id", default=os.environ.get("DATASET_ID", "modelscope/wikitext"))
     parser.add_argument("--hf_dataset_id", default=os.environ.get("HF_DATASET_ID", "Salesforce/wikitext"))
@@ -50,8 +48,13 @@ def parse_args() -> argparse.Namespace:
 def effective_model_id(args: argparse.Namespace, provider: str | None = None) -> str:
     provider = provider or args.provider
     if provider == "huggingface":
-        return args.hf_model_id or args.model_id or DEFAULT_HF_MODEL_ID
-    return args.modelscope_model_id or args.model_id or DEFAULT_MODELSCOPE_MODEL_ID
+        return args.hf_model_id or args.model_id or DEFAULT_MODEL_ID
+    return args.modelscope_model_id or args.model_id or DEFAULT_MODEL_ID
+
+
+def apply_hf_endpoint(args: argparse.Namespace) -> None:
+    if args.hf_endpoint:
+        os.environ["HF_ENDPOINT"] = args.hf_endpoint
 
 
 def is_nonempty_dir(path: Path) -> bool:
@@ -59,16 +62,22 @@ def is_nonempty_dir(path: Path) -> bool:
 
 
 def download_model_huggingface(args: argparse.Namespace) -> str:
+    apply_hf_endpoint(args)
+    from huggingface_hub import snapshot_download
+
     model_dir = Path(args.model_dir).expanduser()
     model_dir.parent.mkdir(parents=True, exist_ok=True)
     model_id = effective_model_id(args, "huggingface")
     print(f"=> Downloading Hugging Face model {model_id} to {model_dir}")
+    if args.hf_endpoint:
+        print(f"=> HF_ENDPOINT={args.hf_endpoint}")
     return snapshot_download(
         repo_id=model_id,
         revision=args.model_revision,
         local_dir=str(model_dir),
         cache_dir=args.cache_dir,
         token=args.token,
+        endpoint=args.hf_endpoint,
         ignore_patterns=["*.h5", "*.msgpack", "*.ot"],
     )
 
@@ -167,6 +176,9 @@ def to_hf_dataset(dataset: Any):
 
 
 def download_wikitext2_huggingface(args: argparse.Namespace) -> Path:
+    apply_hf_endpoint(args)
+    from datasets import DatasetDict, load_dataset
+
     dataset_dir = Path(args.dataset_dir).expanduser()
     if is_nonempty_dir(dataset_dir):
         print(f"=> Dataset directory already exists and is non-empty, skipping: {dataset_dir}")
@@ -175,6 +187,8 @@ def download_wikitext2_huggingface(args: argparse.Namespace) -> Path:
     dataset_dir.parent.mkdir(parents=True, exist_ok=True)
     dataset_id = args.hf_dataset_id or args.dataset_id
     print(f"=> Downloading Hugging Face dataset {dataset_id}/{args.dataset_config} to {dataset_dir}")
+    if args.hf_endpoint:
+        print(f"=> HF_ENDPOINT={args.hf_endpoint}")
     dataset = DatasetDict(
         {
             split: load_dataset(
@@ -193,6 +207,7 @@ def download_wikitext2_huggingface(args: argparse.Namespace) -> Path:
 
 
 def download_wikitext2_modelscope(args: argparse.Namespace) -> Path:
+    from datasets import DatasetDict
     from modelscope import MsDataset
 
     dataset_dir = Path(args.dataset_dir).expanduser()
@@ -248,6 +263,7 @@ def main() -> int:
         "dataset_provider": args.dataset_provider,
         "model_id": effective_model_id(args),
         "model_dir": args.model_dir,
+        "hf_endpoint": args.hf_endpoint,
         "dataset_id": effective_dataset_id,
         "dataset_config": args.dataset_config,
         "dataset_dir": args.dataset_dir,
