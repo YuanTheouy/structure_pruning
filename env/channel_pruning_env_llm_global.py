@@ -1517,7 +1517,7 @@ class ChannelPruningEnv:
             if "opt" in self.model.config.model_type.lower():
                 self.prunable_module_names.append(f"{layer_prefix}.{i}.fc1")
             else:
-                self.prunable_module_names.append(f"{layer_prefix}.{i}.gate_proj")
+                self.prunable_module_names.append(f"{layer_prefix}.{i}.mlp.gate_proj")
         
         print(f"=> Found {len(self.prunable_module_names)} prunable modules.")
 
