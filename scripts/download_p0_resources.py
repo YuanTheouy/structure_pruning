@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download Qwen2.5/WikiText-2 resources for Early-Warning P0.")
-    parser.add_argument("--provider", choices=["modelscope", "huggingface"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
+    parser.add_argument("--provider", choices=["modelscope", "huggingface", "direct"], default=os.environ.get("DOWNLOAD_PROVIDER", "modelscope"))
     parser.add_argument("--dataset_provider", choices=["modelscope", "huggingface"], default=os.environ.get("DATASET_PROVIDER", "modelscope"))
     parser.add_argument("--model_id", default=os.environ.get("MODEL_ID"))
     parser.add_argument("--modelscope_model_id", default=os.environ.get("MODELSCOPE_MODEL_ID"))
@@ -37,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--modelscope_cache_dir", default=os.environ.get("MODELSCOPE_CACHE", "/workspace/datasets/.cache/modelscope"))
     parser.add_argument("--modelscope_backend", choices=["git", "cli", "sdk"], default=os.environ.get("MODELSCOPE_BACKEND", "git"))
     parser.add_argument("--modelscope_git_url", default=os.environ.get("MODELSCOPE_GIT_URL"))
+    parser.add_argument("--direct_base_url", default=os.environ.get("DIRECT_MODEL_BASE_URL"))
     parser.add_argument("--manifest_path", default="/workspace/ckpts/resource_manifest.json")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--modelscope_token", default=os.environ.get("MODELSCOPE_TOKEN"))
@@ -83,6 +85,108 @@ def download_model_huggingface(args: argparse.Namespace) -> str:
     )
 
 
+def qwen25_direct_files(model_id: str) -> list[str]:
+    if model_id not in {"qwen/Qwen2.5-1.5B", "Qwen/Qwen2.5-1.5B"}:
+        raise ValueError(
+            "direct provider currently supports qwen/Qwen2.5-1.5B only; "
+            "pass --provider modelscope or --provider huggingface for other models."
+        )
+    return [
+        ".gitattributes",
+        "LICENSE",
+        "README.md",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+    ]
+
+
+def direct_base_url_candidates(args: argparse.Namespace, model_id: str) -> list[str]:
+    if args.direct_base_url:
+        return [args.direct_base_url.rstrip("/")]
+    if model_id in {"qwen/Qwen2.5-1.5B", "Qwen/Qwen2.5-1.5B"}:
+        return [
+            "https://modelscope.cn/models/qwen/Qwen2.5-1.5B/resolve/master",
+            "https://www.modelscope.cn/models/qwen/Qwen2.5-1.5B/resolve/master",
+            "https://hf-mirror.com/Qwen/Qwen2.5-1.5B/resolve/main",
+            "https://huggingface.co/Qwen/Qwen2.5-1.5B/resolve/main",
+        ]
+    return []
+
+
+def download_one_file(urls: list[str], destination: Path, *, chunk_size: int = 1024 * 1024) -> None:
+    import requests
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".part")
+    if destination.exists() and destination.stat().st_size > 0:
+        print(f"=> Exists, skipping: {destination}", flush=True)
+        return
+
+    last_error: Exception | None = None
+    for url in urls:
+        resume_from = partial.stat().st_size if partial.exists() else 0
+        headers = {"Range": f"bytes={resume_from}-"} if resume_from else {}
+        mode = "ab" if resume_from else "wb"
+        try:
+            print(f"=> Downloading {destination.name} from {url}", flush=True)
+            response = requests.get(url, headers=headers, stream=True, timeout=(10, 120), allow_redirects=True)
+            if resume_from and response.status_code == 200:
+                resume_from = 0
+                mode = "wb"
+            response.raise_for_status()
+
+            total_header = response.headers.get("Content-Range") or response.headers.get("Content-Length")
+            total_size = None
+            if total_header and "/" in total_header:
+                total_size = int(total_header.rsplit("/", 1)[-1])
+            elif total_header:
+                total_size = int(total_header) + resume_from
+
+            downloaded = resume_from
+            last_print = time.monotonic()
+            with partial.open(mode + "") as handle:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.monotonic()
+                    if now - last_print >= 2:
+                        if total_size:
+                            pct = downloaded / total_size * 100
+                            print(f"=> {destination.name}: {downloaded / 2**20:.1f}/{total_size / 2**20:.1f} MiB ({pct:.1f}%)", flush=True)
+                        else:
+                            print(f"=> {destination.name}: {downloaded / 2**20:.1f} MiB", flush=True)
+                        last_print = now
+            partial.rename(destination)
+            return
+        except Exception as exc:
+            last_error = exc
+            print(f"=> Direct download failed for {url}: {exc}", flush=True)
+    raise RuntimeError(f"all direct download attempts failed for {destination.name}") from last_error
+
+
+def download_model_direct(args: argparse.Namespace) -> str:
+    model_dir = Path(args.model_dir).expanduser()
+    model_id = effective_model_id(args, "modelscope")
+    files = qwen25_direct_files(model_id)
+    base_urls = direct_base_url_candidates(args, model_id)
+    if not base_urls:
+        raise RuntimeError(f"no direct download URLs configured for {model_id}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    print(f"=> Direct file download for {model_id} to {model_dir}", flush=True)
+    print("=> URL bases: " + ", ".join(base_urls), flush=True)
+    for filename in files:
+        urls = [f"{base}/{filename}" for base in base_urls]
+        download_one_file(urls, model_dir / filename)
+    return str(model_dir)
+
+
 def download_model_modelscope(args: argparse.Namespace) -> str:
     if args.modelscope_backend == "git":
         return download_model_modelscope_git(args)
@@ -109,6 +213,8 @@ def modelscope_git_url_candidates(args: argparse.Namespace, model_id: str) -> li
     return [
         f"https://modelscope.cn/{model_id}.git",
         f"https://www.modelscope.cn/{model_id}.git",
+        f"https://modelscope.cn/models/{model_id}.git",
+        f"https://www.modelscope.cn/models/{model_id}.git",
     ]
 
 
@@ -240,6 +346,8 @@ def download_model_modelscope_sdk(args: argparse.Namespace) -> str:
 
 
 def download_model(args: argparse.Namespace) -> str:
+    if args.provider == "direct":
+        return download_model_direct(args)
     if args.provider == "huggingface":
         return download_model_huggingface(args)
     try:
@@ -349,6 +457,7 @@ def main() -> int:
         "dataset_provider": args.dataset_provider,
         "model_id": effective_model_id(args),
         "model_dir": args.model_dir,
+        "direct_base_url": args.direct_base_url,
         "modelscope_backend": args.modelscope_backend,
         "modelscope_git_url": args.modelscope_git_url,
         "hf_endpoint": args.hf_endpoint,
