@@ -35,7 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset_dir", default="/workspace/datasets/wikitext/wikitext-2-raw-v1")
     parser.add_argument("--cache_dir", default=os.environ.get("HF_HOME", "/workspace/datasets/.cache/huggingface"))
     parser.add_argument("--modelscope_cache_dir", default=os.environ.get("MODELSCOPE_CACHE", "/workspace/datasets/.cache/modelscope"))
-    parser.add_argument("--modelscope_backend", choices=["cli", "sdk"], default=os.environ.get("MODELSCOPE_BACKEND", "cli"))
+    parser.add_argument("--modelscope_backend", choices=["git", "cli", "sdk"], default=os.environ.get("MODELSCOPE_BACKEND", "git"))
+    parser.add_argument("--modelscope_git_url", default=os.environ.get("MODELSCOPE_GIT_URL"))
     parser.add_argument("--manifest_path", default="/workspace/ckpts/resource_manifest.json")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--modelscope_token", default=os.environ.get("MODELSCOPE_TOKEN"))
@@ -83,9 +84,67 @@ def download_model_huggingface(args: argparse.Namespace) -> str:
 
 
 def download_model_modelscope(args: argparse.Namespace) -> str:
+    if args.modelscope_backend == "git":
+        return download_model_modelscope_git(args)
     if args.modelscope_backend == "cli":
         return download_model_modelscope_cli(args)
     return download_model_modelscope_sdk(args)
+
+
+def run_streaming_command(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
+    print("=> " + " ".join(cmd), flush=True)
+    proc = subprocess.Popen(cmd, env=env)
+    try:
+        return_code = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        raise
+    if return_code != 0:
+        raise RuntimeError(f"command exited with code {return_code}: {' '.join(cmd)}")
+
+
+def download_model_modelscope_git(args: argparse.Namespace) -> str:
+    model_dir = Path(args.model_dir).expanduser()
+    model_id = effective_model_id(args, "modelscope")
+    repo_url = args.modelscope_git_url or f"https://www.modelscope.cn/{model_id}.git"
+
+    git = shutil.which("git")
+    if not git:
+        raise RuntimeError("git is not available on PATH")
+    has_lfs = subprocess.run(
+        [git, "lfs", "version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    if not has_lfs:
+        raise RuntimeError("git-lfs is required for ModelScope git downloads. Install it, then run: git lfs install")
+
+    env = os.environ.copy()
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"
+
+    print("=> ModelScope hub: https://modelscope.cn", flush=True)
+    print(f"=> Downloading ModelScope git repo {repo_url} to {model_dir}", flush=True)
+
+    if model_dir.exists() and (model_dir / ".git").exists():
+        run_streaming_command([git, "-C", str(model_dir), "fetch", "--all", "--prune"], env=os.environ.copy())
+        if args.model_revision:
+            run_streaming_command([git, "-C", str(model_dir), "checkout", args.model_revision], env=os.environ.copy())
+        else:
+            run_streaming_command([git, "-C", str(model_dir), "pull", "--ff-only"], env=os.environ.copy())
+    elif is_nonempty_dir(model_dir):
+        raise RuntimeError(
+            f"{model_dir} already exists but is not a git checkout. Move it aside or pass --model_dir to a clean path."
+        )
+    else:
+        model_dir.parent.mkdir(parents=True, exist_ok=True)
+        run_streaming_command([git, "lfs", "install"], env=os.environ.copy())
+        run_streaming_command([git, "clone", "--progress", repo_url, str(model_dir)], env=env)
+        if args.model_revision:
+            run_streaming_command([git, "-C", str(model_dir), "checkout", args.model_revision], env=os.environ.copy())
+
+    run_streaming_command([git, "-C", str(model_dir), "lfs", "pull", "--exclude=*.h5,*.msgpack,*.ot"], env=os.environ.copy())
+    return str(model_dir)
 
 
 def download_model_modelscope_cli(args: argparse.Namespace) -> str:
@@ -264,6 +323,8 @@ def main() -> int:
         "dataset_provider": args.dataset_provider,
         "model_id": effective_model_id(args),
         "model_dir": args.model_dir,
+        "modelscope_backend": args.modelscope_backend,
+        "modelscope_git_url": args.modelscope_git_url,
         "hf_endpoint": args.hf_endpoint,
         "dataset_id": effective_dataset_id,
         "dataset_config": args.dataset_config,
