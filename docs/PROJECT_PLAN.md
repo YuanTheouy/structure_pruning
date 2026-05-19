@@ -137,15 +137,49 @@ Expected early-warning output:
 After the smoke test completes, increase budget gradually:
 
 ```bash
+cd /workspace/structure_pruning
+git fetch origin
+git merge --ff-only origin/main
+
+export MODEL=/workspace/Models/opt-2.7b
+export MODEL_NAME=opt-2.7b
+export WIKITEXT2_PATH=/workspace/datasets/wikitext/wikitext-2-raw-v1
+export CKPT_ROOT=/workspace/ckpts
+
+export GPU_IDS="0 1 2 3 4 5 6 7"
+export TARGET_SPARSITY=0.30
+export DELTA=0.05
 export TRAIN_EPISODES=5000
 unset EPISODES_PER_WORKER
 export N_SAMPLES=32
 export TOP_K=20
 export NUM_COLLECT=15
 export LEARNING_EPOCH=10
+export SEED=2025
 
 bash scripts/run_p0_candidate_search_multigpu.sh
 bash scripts/run_ew_p0_multigpu.sh
+
+python evaluate_high_sparsity_curve.py \
+  --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/selected_candidates.json \
+  --model /workspace/Models/opt-2.7b \
+  --model_name opt-2.7b \
+  --sparsities 0.30 0.35 0.40 \
+  --num_samples 64 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_high_sparsity
+
+python analyze_curvature_correlation.py \
+  --probe_results /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/probe_results.csv \
+  --future_results_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_high_sparsity/high_sparsity_results.csv \
+  --target_sparsity 0.30 \
+  --future_sparsity 0.40 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_future_correlation
+```
+
+Equivalent wrapper:
+
+```bash
+bash scripts/run_p0_larger_server.sh
 ```
 
 If GPU0 is already occupied, exclude it:
@@ -177,6 +211,9 @@ Record these after each run:
 - Rerank results: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/rerank_results.csv`
 - Selected candidate JSON: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/selected_candidates.json`
 - Best candidate JSON: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/best_candidate.json`
+- High-sparsity selected-candidate evaluation: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_high_sparsity/high_sparsity_results.csv`
+- Separated future correlation table: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_future_correlation/correlation_table.csv`
+- Joined separated target rows: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_future_correlation/correlation_joined.csv`
 
 ### Observed P0 Smoke-Test Artifacts
 
@@ -232,7 +269,7 @@ probe ppl_zero: 379.2400817871094
 probe ppl_plus: 644.6773681640625
 slope: 10.611610430894522
 curvature: -90.62480751317209
-future_degradation: 0.5305805215447261
+local_probe_degradation_0.35_minus_0.30: 0.5305805215447261
 actual_sparsity_minus: 0.2501126329304517
 actual_sparsity_zero: 0.3005624973626173
 actual_sparsity_plus: 0.350333810748619

@@ -510,6 +510,7 @@ def run_probe(env, args):
         log_plus = probe_values["plus"]["logppl"]
         slope = (log_plus - log_zero) / delta
         curvature = (log_plus - 2.0 * log_zero + log_minus) / (delta ** 2)
+        local_probe_degradation = log_plus - log_zero
 
         row = {
             "candidate_id": candidate_id,
@@ -540,7 +541,8 @@ def run_probe(env, args):
             "logppl_plus": log_plus,
             "slope": slope,
             "curvature": curvature,
-            "future_degradation": log_plus - log_zero,
+            "local_probe_degradation": local_probe_degradation,
+            "probe_plus_minus_zero_degradation": local_probe_degradation,
             "policy_minus_path": probe_values["minus"]["policy_path"],
             "policy_zero_path": probe_values["zero"]["policy_path"],
             "policy_plus_path": probe_values["plus"]["policy_path"],
