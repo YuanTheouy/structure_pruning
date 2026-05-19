@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest_path", default="/workspace/ckpts/resource_manifest.json")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN"))
     parser.add_argument("--modelscope_token", default=os.environ.get("MODELSCOPE_TOKEN"))
-    parser.add_argument("--fallback_to_hf", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--fallback_to_hf", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--skip_model", action="store_true")
     parser.add_argument("--skip_dataset", action="store_true")
     return parser.parse_args()
@@ -139,6 +139,9 @@ def download_model(args: argparse.Namespace) -> str:
         return download_model_modelscope(args)
     except Exception as exc:
         if not args.fallback_to_hf:
+            print(f"=> ModelScope model download failed: {exc}")
+            print("=> Not falling back to Hugging Face. Use --fallback_to_hf to allow fallback.")
+            print("=> If this is a ModelScope repo-id issue, pass --modelscope_model_id or set MODELSCOPE_MODEL_ID.")
             raise
         print(f"=> ModelScope model download failed: {exc}")
         print("=> Falling back to Hugging Face model download.")
@@ -212,6 +215,9 @@ def download_wikitext2(args: argparse.Namespace) -> Path:
         return download_wikitext2_modelscope(args)
     except Exception as exc:
         if not args.fallback_to_hf:
+            print(f"=> ModelScope dataset download failed: {exc}")
+            print("=> Not falling back to Hugging Face. Use --fallback_to_hf to allow fallback.")
+            print("=> If this is a ModelScope repo-id issue, pass --modelscope_dataset_id or set MODELSCOPE_DATASET_ID.")
             raise
         print(f"=> ModelScope dataset download failed: {exc}")
         print("=> Falling back to Hugging Face dataset download.")
