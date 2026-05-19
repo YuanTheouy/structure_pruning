@@ -103,10 +103,19 @@ def run_streaming_command(cmd: list[str], *, env: dict[str, str] | None = None) 
         raise RuntimeError(f"command exited with code {return_code}: {' '.join(cmd)}")
 
 
+def modelscope_git_url_candidates(args: argparse.Namespace, model_id: str) -> list[str]:
+    if args.modelscope_git_url:
+        return [args.modelscope_git_url]
+    return [
+        f"https://modelscope.cn/{model_id}.git",
+        f"https://www.modelscope.cn/{model_id}.git",
+    ]
+
+
 def download_model_modelscope_git(args: argparse.Namespace) -> str:
     model_dir = Path(args.model_dir).expanduser()
     model_id = effective_model_id(args, "modelscope")
-    repo_url = args.modelscope_git_url or f"https://www.modelscope.cn/{model_id}.git"
+    repo_urls = modelscope_git_url_candidates(args, model_id)
 
     git = shutil.which("git")
     if not git:
@@ -124,7 +133,8 @@ def download_model_modelscope_git(args: argparse.Namespace) -> str:
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
 
     print("=> ModelScope hub: https://modelscope.cn", flush=True)
-    print(f"=> Downloading ModelScope git repo {repo_url} to {model_dir}", flush=True)
+    print(f"=> Downloading ModelScope git repo {model_id} to {model_dir}", flush=True)
+    print("=> URL candidates: " + ", ".join(repo_urls), flush=True)
 
     if model_dir.exists() and (model_dir / ".git").exists():
         run_streaming_command([git, "-C", str(model_dir), "fetch", "--all", "--prune"], env=os.environ.copy())
@@ -139,7 +149,23 @@ def download_model_modelscope_git(args: argparse.Namespace) -> str:
     else:
         model_dir.parent.mkdir(parents=True, exist_ok=True)
         run_streaming_command([git, "lfs", "install"], env=os.environ.copy())
-        run_streaming_command([git, "clone", "--progress", repo_url, str(model_dir)], env=env)
+        last_error: Exception | None = None
+        for index, repo_url in enumerate(repo_urls):
+            tmp_dir = model_dir.parent / f".{model_dir.name}.tmp-modelscope-git-{os.getpid()}-{index}"
+            try:
+                run_streaming_command([git, "clone", "--progress", repo_url, str(tmp_dir)], env=env)
+                if model_dir.exists():
+                    model_dir.rmdir()
+                tmp_dir.rename(model_dir)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                print(f"=> ModelScope git clone failed for {repo_url}: {exc}", flush=True)
+                if tmp_dir.exists():
+                    shutil.rmtree(tmp_dir)
+        if last_error is not None:
+            raise RuntimeError(f"all ModelScope git clone attempts failed for {model_id}") from last_error
         if args.model_revision:
             run_streaming_command([git, "-C", str(model_dir), "checkout", args.model_revision], env=os.environ.copy())
 
