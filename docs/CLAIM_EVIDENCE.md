@@ -164,7 +164,39 @@ Priority order after two-pool P0:
    - completed with identical no-reconstruction settings for `FF-Endpoint` and `PAS-Slope`.
 4. Overhead summary:
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.csv`
-   - missing GPU-hour accounting must be marked explicitly rather than guessed.
+   - completed; missing GPU-hour accounting is marked explicitly rather than guessed.
+
+## PAS Overhead Summary Evidence
+
+Status: seed `3025` overhead summary completed with explicit missing fields.
+
+Protocol recorded on 2026-05-21:
+
+- PAS directory: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025`.
+- Selected-candidate recheck directory: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64`.
+- Final-eval directory: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon`.
+
+Primary artifacts:
+
+- Overhead CSV: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.csv`
+- Overhead JSON: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.json`
+
+Observed overhead rows:
+
+| Stage | Wall Seconds | Approx GPU-Hours | Status |
+| --- | --- | --- | --- |
+| candidate search | missing | missing | `missing` |
+| PAS probe `0.25/0.30/0.35` | `2871.348848581314` | `0.7975969023836984` | `measured_from_probe_rows` |
+| held-out analysis `0.40` | missing | missing | `missing_in_existing_artifacts` |
+| selected-candidate recheck `0.40` | `221.16922211647034` | `0.061435895032352875` | `measured_from_recheck` |
+| compensation-aligned final eval | `233.10833382606506` | `0.06475231495168474` | `measured_from_final_eval` |
+| final checkpoint type | n/a | n/a | `not_gpu_cost`; static exact-budget pruned checkpoint |
+| inference-time overhead | `0.0` | `0.0` | `by_design` |
+
+Interpretation guardrail:
+
+- PAS overhead is selection/evaluation time only; the deployed artifact remains a static checkpoint.
+- Candidate-search and original held-out analysis timing are not recoverable from existing artifacts and should be reported as missing, not estimated.
 
 ## Compensation-Aligned Final Evaluation Evidence
 

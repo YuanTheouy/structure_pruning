@@ -653,6 +653,20 @@ python summarize_overhead.py \
   --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead
 ```
 
+Observed P4 overhead summary, recorded on 2026-05-21:
+
+```text
+candidate_search: missing timing / missing GPU-hours
+pas_probe_0.25_0.30_0.35: 2871.348848581314 seconds, 0.7975969023836984 GPU-hours
+heldout_analysis_0.40: missing timing / missing GPU-hours
+selected_candidate_recheck_0.40: 221.16922211647034 seconds, 0.061435895032352875 GPU-hours
+compensation_aligned_final_eval: 233.10833382606506 seconds, 0.06475231495168474 GPU-hours
+final_checkpoint_type: static exact-budget pruned checkpoint
+inference_time_overhead: 0.0 seconds, 0.0 GPU-hours by design
+```
+
+P4 status: completed. Missing candidate-search and original held-out timing are explicitly marked as missing rather than guessed.
+
 ## Review Questions
 
 - Is curvature better than slope, or is slope sufficient?
