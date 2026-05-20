@@ -291,13 +291,16 @@ def evaluate_heldout(args, probe_rows, candidates_by_id, output_dir):
         cmd = build_compile_command(args, repo_root, best_path, export_path, final_policy_path)
         command_lines.append(" ".join(shlex.quote(str(part)) for part in cmd))
 
+        eval_seconds_h = ""
         if metadata_path.exists() and not args.force_heldout:
             pass
         elif args.dry_run:
             continue
         else:
             print(" ".join(shlex.quote(str(part)) for part in cmd))
+            start_time = time.time()
             rc = subprocess.call(cmd, cwd=repo_root)
+            eval_seconds_h = time.time() - start_time
             if rc != 0:
                 raise SystemExit(rc)
 
@@ -318,6 +321,7 @@ def evaluate_heldout(args, probe_rows, candidates_by_id, output_dir):
                     "checkpoint_path": str(export_path),
                     "metadata_path": str(metadata_path),
                     "heldout_num_samples": args.heldout_num_samples,
+                    "eval_seconds_h": eval_seconds_h,
                     "analysis_only": True,
                 }
             )

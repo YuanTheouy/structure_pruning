@@ -132,3 +132,22 @@ Interpretation guardrail:
 - `PAS-Plus` does not improve over endpoint in these two pools.
 - `PAS-Curv` is mixed: it matches oracle in `seed2025` but fails in `seed3025`.
 - This is enough to stage a P0 table, but not enough for a broad model-general claim.
+
+## Next Artifact Slots
+
+Priority order after two-pool P0:
+
+1. Seed `3025` selected-candidate high-sample recheck:
+   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv`
+   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv`
+   - success condition: PAS-Slope selected candidate remains better than FF-Endpoint at held-out `0.40` with `64` samples.
+2. Cross-model PAS pilot, preferred `OPT-1.3B`:
+   - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/selection_regret.csv`
+   - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/warning_correlation.csv`
+   - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/artifact_manifest.json`
+3. Compensation-aligned final evaluation:
+   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon/pas_compensation_aligned_eval.csv`
+   - compare `FF-Endpoint` and `PAS-Slope` with identical recovery settings.
+4. Overhead summary:
+   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.csv`
+   - missing GPU-hour accounting must be marked explicitly rather than guessed.

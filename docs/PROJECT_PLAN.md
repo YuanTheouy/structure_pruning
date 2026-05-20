@@ -499,6 +499,96 @@ P0 two-pool paper table staging:
 
 Current P0 reading: `PAS-Slope` is the main evidence-carrying rule; `PAS-Curv` is an ablation with mixed behavior.
 
+### Next Server Runs After Two-Pool P0
+
+Run in this order. P1 should finish before using seed `3025` for manuscript table staging; P3 should run only after P1 confirms PAS-Slope remains better at higher samples.
+
+P1 high-sample recheck for seed `3025` selected candidates:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python pas_selected_heldout_recheck.py \
+  --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
+  --model /workspace/Models/opt-2.7b \
+  --model_name opt-2.7b \
+  --future_sparsity 0.40 \
+  --num_samples 64 \
+  --batch_size 50 \
+  --seed 3025 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64
+```
+
+P2 cross-model PAS pilot, preferred `OPT-1.3B`:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+export MODEL=/workspace/Models/opt-1.3b
+export MODEL_NAME=opt-1.3b
+export WIKITEXT2_PATH=/workspace/datasets/wikitext/wikitext-2-raw-v1
+export CKPT_ROOT=/workspace/ckpts
+export GPU_IDS="0 1 2 3 4 5 6 7"
+export TARGET_SPARSITY=0.30
+export DELTA=0.05
+export TRAIN_EPISODES=400
+export N_SAMPLES=16
+export TOP_K=20
+export SHORTLIST_SIZE=2
+export RANDOM_REPEATS=500
+export NUM_COLLECT=5
+export LEARNING_EPOCH=3
+export HELDOUT_N_SAMPLES=32
+export SEED=2025
+export RUN_ID_PREFIX=p0_candidates_opt13b_seed2025
+export MERGED_CANDIDATE_DIR=/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_candidates_seed2025/candidates
+export CANDIDATE_DIR=$MERGED_CANDIDATE_DIR
+export EW_OUTPUT_DIR=/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_ew_seed2025
+export PAS_OUTPUT_DIR=/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025
+export RUN_CANDIDATE_SEARCH=true
+export RUN_PROBE=true
+export RUN_PAS=true
+
+bash scripts/run_pas_p0_server.sh
+```
+
+P3 compensation-aligned final evaluation for seed `3025`, no reconstruction/calibration unless the same flag is deliberately enabled for both rules:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python pas_compile_selected_final.py \
+  --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
+  --model /workspace/Models/opt-2.7b \
+  --model_name opt-2.7b \
+  --target_sparsity 0.30 \
+  --rules FF-Endpoint,PAS-Slope \
+  --num_samples 64 \
+  --batch_size 50 \
+  --seed 3025 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon
+```
+
+P4 overhead summary after P1 and P3 artifacts exist:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python summarize_overhead.py \
+  --pas_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025 \
+  --recheck_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64 \
+  --final_eval_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead
+```
+
 ## Review Questions
 
 - Is curvature better than slope, or is slope sufficient?

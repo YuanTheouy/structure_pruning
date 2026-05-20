@@ -122,13 +122,16 @@ def main():
 
         cmd = build_compile_command(args, repo_root, best_path, export_path, final_policy_path)
         command_lines.append(" ".join(shlex.quote(str(part)) for part in cmd))
+        eval_seconds_h = ""
         if metadata_path.exists() and not args.force:
             pass
         elif args.dry_run:
             continue
         else:
             print(" ".join(shlex.quote(str(part)) for part in cmd))
+            start_time = time.time()
             rc = subprocess.call(cmd, cwd=repo_root)
+            eval_seconds_h = time.time() - start_time
             if rc != 0:
                 raise SystemExit(rc)
 
@@ -147,6 +150,7 @@ def main():
                     "relative_budget_error_h": metadata.get("relative_budget_error", ""),
                     "checkpoint_path": str(export_path),
                     "metadata_path": str(metadata_path),
+                    "eval_seconds_h": eval_seconds_h,
                 }
             )
 
@@ -193,6 +197,7 @@ def main():
         "seed": args.seed,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "command": " ".join(shlex.quote(part) for part in sys.argv),
+        "total_eval_seconds": sum(float(row["eval_seconds_h"]) for row in rows if row.get("eval_seconds_h") not in ("", None)),
         "artifacts": {
             "selected_heldout_recheck": str(csv_path),
             "selected_heldout_recheck_regret": str(regret_path),
