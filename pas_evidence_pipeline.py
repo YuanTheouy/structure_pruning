@@ -154,6 +154,40 @@ def normalize_probe_rows(rows, delta):
     return normalized
 
 
+def unique_values(rows, key):
+    values = []
+    seen = set()
+    for row in rows:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        text = str(value)
+        if text not in seen:
+            values.append(text)
+            seen.add(text)
+    return values
+
+
+def parse_maybe_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def infer_probe_samples(probe_rows, fallback):
+    values = unique_values(probe_rows, "eval_num_samples")
+    if not values:
+        return fallback, []
+    parsed_values = [parse_maybe_number(value) for value in values]
+    if len(parsed_values) == 1:
+        return parsed_values[0], parsed_values
+    return parsed_values, parsed_values
+
+
 def build_shortlist(rows, shortlist_size, endpoint_epsilon):
     if not rows:
         raise RuntimeError("No probe rows available for PAS selection.")
@@ -535,6 +569,7 @@ def main():
     selections = select_without_heldout(probe_rows, shortlist)
     normalized_probe_path = output_dir / "probe_results.csv"
     write_csv(normalized_probe_path, probe_rows)
+    observed_probe_samples, observed_probe_sample_values = infer_probe_samples(probe_rows, args.probe_num_samples)
 
     heldout_rows, heldout_path = evaluate_heldout(args, probe_rows, candidates_by_id, output_dir)
     if args.dry_run:
@@ -600,7 +635,9 @@ def main():
         "shortlist_rule": shortlist_rule,
         "shortlist_size": len(shortlist),
         "random_repeats": args.random_repeats,
-        "probe_samples": args.probe_num_samples,
+        "probe_samples": observed_probe_samples,
+        "probe_samples_arg": args.probe_num_samples,
+        "probe_eval_num_samples_values": observed_probe_sample_values,
         "heldout_samples": args.heldout_num_samples,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "command": " ".join(shlex.quote(part) for part in sys.argv),
