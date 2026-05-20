@@ -675,6 +675,130 @@ P4 status: completed. Missing candidate-search and original held-out timing are 
 - Does calibration change the ranking, or only improve endpoint PPL?
 - Are all PPL values computed on the same calibration/evaluation split and sequence length?
 
+## Policy-Selection Pivot Runbook
+
+This runbook follows `PAS_POLICY_SELECTION_DISPATCH_2026_05_21.md`. The paper framing is now budget-transferable priority-vector / policy selection, not proving PAS is better at a single `30%` endpoint.
+
+### P0-P2 Consolidated Tables And Figures
+
+Run this after the existing OPT-2.7B and OPT-1.3B PAS artifacts are present:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python pas_policy_selection_report.py \
+  --output_dir /workspace/ckpts/pas_policy_selection_20260521
+```
+
+Expected P0 artifacts:
+
+```text
+/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.csv
+/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.md
+/workspace/ckpts/pas_policy_selection_20260521/policy_selection_manifest.json
+```
+
+Expected P1 artifacts:
+
+```text
+/workspace/ckpts/pas_policy_selection_20260521/shortlist_sensitivity.csv
+/workspace/ckpts/pas_policy_selection_20260521/shortlist_sensitivity.md
+```
+
+Expected P2 artifacts:
+
+```text
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/endpoint_ambiguity_scatter.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/policy_path_lines.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/target_future_tradeoff.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/endpoint_ambiguity_scatter.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/policy_path_lines.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/target_future_tradeoff.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/endpoint_ambiguity_scatter.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/policy_path_lines.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/target_future_tradeoff.pdf
+```
+
+The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only.
+
+### P3 Matched Future-Budget Eval
+
+The existing seed `3025` selected-candidate recheck is equivalent to the requested matched `40%` final eval: it uses the same selected priority-vector candidates, same model/dataset, `final_sparsity=0.40`, no reconstruction, and `64` samples. Materialize it under the required filenames:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python pas_export_future_eval_from_recheck.py \
+  --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
+  --recheck_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv \
+  --recheck_regret_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv \
+  --model /workspace/Models/opt-2.7b \
+  --model_name opt-2.7b \
+  --future_sparsity 0.40 \
+  --rules FF-Endpoint,PAS-Slope \
+  --num_samples 64 \
+  --batch_size 50 \
+  --seed 3025 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck
+```
+
+Expected artifacts:
+
+```text
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_eval_40.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_manifest_40.json
+```
+
+### P4 One More Setting
+
+If server time allows, run the next setting: `OPT-2.7B`, `sigma=0.35`, probe `0.30/0.35/0.40`, held-out `0.45`.
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+export MODEL=/workspace/Models/opt-2.7b
+export MODEL_NAME=opt-2.7b
+export WIKITEXT2_PATH=/workspace/datasets/wikitext/wikitext-2-raw-v1
+export CKPT_ROOT=/workspace/ckpts
+export GPU_IDS="0 1 2 3 4 5 6 7"
+export TARGET_SPARSITY=0.35
+export DELTA=0.05
+export HELDOUT_SPARSITY=0.45
+export TRAIN_EPISODES=400
+export N_SAMPLES=16
+export TOP_K=20
+export SHORTLIST_SIZE=2
+export RANDOM_REPEATS=500
+export NUM_COLLECT=5
+export LEARNING_EPOCH=3
+export HELDOUT_N_SAMPLES=32
+export SEED=2025
+export RUN_ID_PREFIX=p0_candidates_opt27b_s035_seed2025
+export MERGED_CANDIDATE_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_candidates_seed2025/candidates
+export CANDIDATE_DIR=$MERGED_CANDIDATE_DIR
+export EW_OUTPUT_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_ew_seed2025
+export PAS_OUTPUT_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025
+export RUN_CANDIDATE_SEARCH=true
+export RUN_PROBE=true
+export RUN_PAS=true
+
+bash scripts/run_pas_p0_server.sh
+```
+
+Expected artifacts:
+
+```text
+/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/artifact_manifest.json
+/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/selection_regret.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/warning_correlation.csv
+```
+
 ## Positioning Guardrails
 
 - Lead with compression-resilience diagnosis and candidate selection.

@@ -198,6 +198,60 @@ Interpretation guardrail:
 - PAS overhead is selection/evaluation time only; the deployed artifact remains a static checkpoint.
 - Candidate-search and original held-out analysis timing are not recoverable from existing artifacts and should be reported as missing, not estimated.
 
+## Policy-Selection Pivot Artifact Plan
+
+Status: prepared on 2026-05-21 for the budget-transferable priority-vector framing.
+
+P0 consolidated policy-selection table:
+
+- Command:
+  - `python pas_policy_selection_report.py --output_dir /workspace/ckpts/pas_policy_selection_20260521`
+- Expected artifacts:
+  - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.csv`
+  - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.md`
+  - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_manifest.json`
+- Required interpretation:
+  - target-budget and stricter-budget values may come from different artifact protocols; the `artifact_source` column records this explicitly.
+  - seed `3025` includes final no-reconstruction target eval and selected-candidate `0.40` recheck values.
+
+P1 endpoint-compatibility sensitivity:
+
+- Same command as P0, because the report script also writes:
+  - `/workspace/ckpts/pas_policy_selection_20260521/shortlist_sensitivity.csv`
+  - `/workspace/ckpts/pas_policy_selection_20260521/shortlist_sensitivity.md`
+- Fixed predeclared shortlist rules:
+  - `top_m = 2, 3, 5`
+  - `epsilon_logloss = 0.02, 0.05, 0.10`
+- Required interpretation:
+  - `0.40` is analysis-only; shortlist size/type is predeclared, not tuned from held-out results.
+
+P2 policy-selection figures:
+
+- Same command as P0, because the report script also writes per-pool figures under:
+  - `/workspace/ckpts/pas_policy_selection_20260521/figures/`
+- Expected figure names per pool:
+  - `endpoint_ambiguity_scatter.pdf`
+  - `policy_path_lines.pdf`
+  - `target_future_tradeoff.pdf`
+
+P3 matched stricter-budget final evaluation:
+
+- Existing selected-candidate recheck is protocol-equivalent to the requested matched `0.40` final eval: it uses `amc_searchPPO.py --job=compile`, `final_sparsity=0.40`, no reconstruction, same model/dataset, same sample count, and the same selected priority-vector candidates.
+- Materialization command:
+  - `python pas_export_future_eval_from_recheck.py --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json --recheck_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv --recheck_regret_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv --model /workspace/Models/opt-2.7b --model_name opt-2.7b --future_sparsity 0.40 --rules FF-Endpoint,PAS-Slope --num_samples 64 --batch_size 50 --seed 3025 --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck`
+- Expected artifacts:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_eval_40.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_manifest_40.json`
+
+P4 one-more-setting command slot:
+
+- Preferred next setting:
+  - `OPT-2.7B`, `sigma=0.35`, probe `0.30/0.35/0.40`, held-out `0.45`.
+- Expected artifacts:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/artifact_manifest.json`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/selection_regret.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/warning_correlation.csv`
+
 ## Compensation-Aligned Final Evaluation Evidence
 
 Status: seed `3025` final target-sparsity evaluation completed without reconstruction/calibration.
