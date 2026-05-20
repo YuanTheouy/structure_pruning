@@ -458,6 +458,47 @@ Expected artifacts:
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/warning_correlation.csv
 ```
 
+Observed second seed pool, recorded on 2026-05-20:
+
+```text
+probe rows: 20
+held-out rows: 20
+seed: 3025
+shortlist: top-2-by-ell_0
+probe samples: 16
+held-out samples: 32
+
+FF-Endpoint candidate: p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037
+FF-Endpoint ell_h: 5.569866195844515
+FF-Endpoint PPL: 262.39898681640625
+FF-Endpoint regret: 0.5581475044600985
+
+PAS-Plus candidate: p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037
+PAS-Plus regret: 0.5581475044600985
+
+PAS-Slope candidate: p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048
+PAS-Slope ell_h: 5.0117186913844165
+PAS-Slope PPL: 150.16259765625
+PAS-Slope regret: 0.0
+
+PAS-Curv candidate: p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037
+PAS-Curv regret: 0.5581475044600985
+
+Oracle-heldout candidate: p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048
+Random-shortlist regret mean/std: 0.27907375223004927 / 0.2790737522300493
+slope correlation: Pearson 0.8337100870651009, Spearman 0.8285714285714285
+curvature correlation: Pearson 0.391305442885115, Spearman 0.41052631578947363
+```
+
+P0 two-pool paper table staging:
+
+| Pool | FF-Endpoint Regret | PAS-Plus Regret | PAS-Slope Regret | PAS-Curv Regret | Random Mean Regret | Slope Spearman | Curv Spearman |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `seed2025` | `0.27734373462907325` | `0.27734373462907325` | `0.0` | `0.0` | `0.14033592972231104` | `0.8030075187969924` | `0.5969924812030075` |
+| `seed3025` | `0.5581475044600985` | `0.5581475044600985` | `0.0` | `0.5581475044600985` | `0.27907375223004927` | `0.8285714285714285` | `0.41052631578947363` |
+
+Current P0 reading: `PAS-Slope` is the main evidence-carrying rule; `PAS-Curv` is an ablation with mixed behavior.
+
 ## Review Questions
 
 - Is curvature better than slope, or is slope sufficient?

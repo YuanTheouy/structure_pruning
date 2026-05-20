@@ -2,10 +2,11 @@
 
 | Claim | Evidence Needed | Current Asset | Gap | Next Action |
 | --- | --- | --- | --- | --- |
-| Endpoint-similar pruning candidates can have divergent future compression paths. | Candidate path CSV across sparsities, plus `path_divergence.pdf`. | Smoke candidate pool exists: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates/candidates/candidates.jsonl` with 8 selected candidates from 58 merged candidates. | Need path evaluation across future sparsities and plot artifact. | Run `evaluate_candidate_paths.py` or `evaluate_high_sparsity_curve.py`, then `plot_path_divergence.py`. |
-| Local log-PPL curvature predicts future degradation. | Pearson/Spearman/AUROC between curvature at warning sparsity and separated future log-PPL increase: curvature from 0.25/0.30/0.35, future target `logPPL(0.40)-logPPL(0.30)`. | Smoke probe exists: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/probe_results.csv` with 8 probe rows; best smoke candidate has `curvature=-90.62480751317209`, local diagnostic `local_probe_degradation_0.35_minus_0.30=0.5305805215447261`. | Smoke run is too small (`N_SAMPLES=8`, 8 candidates), and its local diagnostic overlaps with the curvature probe. | Run larger P0 and compute separated future degradation at 0.40. Do not use 0.40 for reranking, lambda/tau tuning, candidate filtering, or early stopping. |
-| Curvature reranking improves high-sparsity stability over endpoint-only selection. | Endpoint vs. slope vs. curvature selected candidates evaluated at 30/35/40% sparsity. | Smoke rerank exists: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/rerank_results.csv`, `best_candidate.json`, `selected_candidates.json`. | Need selected candidates evaluated at future sparsities before any improvement claim. | Run rerank modes, compile selected policies, evaluate high-sparsity curve. |
-| Gains come from the early-warning criterion, not merely extra probe evaluations. | Ablation table: endpoint, probe-only, slope, curvature. | Smoke selected-candidate JSON exists at `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/selected_candidates.json`. | Need comparable ablation outputs, not just one smoke rerank. | Generate ablation CSV/LaTeX after a larger P0 probe run. |
+| Endpoint-similar pruning candidates can have divergent future compression paths. | Candidate path CSV across sparsities, plus `path_divergence.pdf`. | Two P0 pools now have `path_divergence.pdf`: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/path_divergence.pdf` and `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/path_divergence.pdf`. | Need figure inspection before manuscript use. | Inspect figures and keep the claim scoped to same-pool P0 evidence. |
+| Local path-warning slope predicts future degradation. | Pearson/Spearman between slope from `0.25/0.30/0.35` and separated future target `logPPL(0.40)-logPPL(0.30)`. | Two P0 pools show slope Spearman `0.8030075187969924` and `0.8285714285714285`. | Evidence is still OPT-2.7B/WikiText-2 P0 only. | Use slope as the primary PAS warning score for the current paper table staging. |
+| Curvature is a useful but not primary warning score. | Pearson/Spearman for curvature from `0.25/0.30/0.35` against separated future target. | Two P0 pools show curvature Spearman `0.5969924812030075` and `0.41052631578947363`; PAS-Curv succeeds in the first pool but fails in seed `3025`. | Curvature is weaker and mixed relative to slope. | Keep PAS-Curv as an ablation, not the headline selection rule. |
+| Path-warning selection improves high-sparsity stability over endpoint-only selection. | Same-pool selection regret table: FF-Endpoint, PAS-Plus, PAS-Slope, PAS-Curv, Oracle-heldout. | Two P0 pools show PAS-Slope regret `0.0` in both; FF-Endpoint regret is `0.27734373462907325` and `0.5581475044600985`. | Need broader model/dataset evidence before broad claims. | Fill P0 table staging, but phrase final paper claims as P0 evidence unless expanded. |
+| Gains come from the early-warning criterion, not merely extra probe evaluations. | Ablation table: endpoint, plus-probe, slope, curvature, oracle. | Two P0 pools have comparable `selection_regret.csv` artifacts under `p0_pas` and `p0_pas_seed3025`. | Need final table formatting and optional selected-candidate high-sample recheck for seed `3025`. | Use PAS-Plus as the probe-only control and PAS-Slope as the warning selection. |
 | Early-warning adds selection-stage cost but no inference-time overhead. | Runtime summary with search GPU-hours, probe cost, calibration cost, and final checkpoint type. | Smoke probe row records `eval_seconds_total=144.03351759910583` for best candidate; scripts record per-shard logs under `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/shards/`. | Need full run-level overhead summary and final checkpoint metadata. | Run `summarize_overhead.py` after larger candidate probe/evaluation. |
 | The narrowed contribution is novel enough under 2026 related work. | Independent novelty matrix and reviewer-risk review with 2025-2026 pruning/phase-transition work. | `docs/NOVELTY_REVIEW.md` completed on 2026-05-19. | Need to ensure final manuscript follows the narrowed wording and cites GISP, GRASPrune, Olica, Týr-the-Pruner, and phase-transition work correctly. | Keep contribution wording as candidate-selection/early-warning diagnostic; do not broaden to generic structured pruning. |
 
@@ -76,3 +77,58 @@ Interpretation guardrail:
 - This supports the PAS direction for one controlled P0 pool.
 - It does not establish universal PAS improvement.
 - Before filling manuscript tables as final evidence, run at least one independent seed pool.
+
+## Independent PAS P0 Seed Pool Evidence
+
+Status: second independent P0 pool completed; still same model/dataset setting.
+
+Protocol recorded on 2026-05-20:
+
+- Model/dataset: `OPT-2.7B` on `WikiText-2`.
+- Candidate pool: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates`.
+- PAS output: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025`.
+- Seed: `3025`.
+- Target sparsity: `0.30`.
+- Probe budgets: `0.25 / 0.30 / 0.35`.
+- Held-out future budget: `0.40`, analysis-only.
+- Candidate count: `top_k=20`.
+- Fixed shortlist rule: `top-2-by-ell_0`.
+- Probe samples: `16`.
+- Held-out samples: `32`.
+
+Primary artifacts:
+
+- Manifest: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/artifact_manifest.json`
+- PAS regret table: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selection_regret.csv`
+- Warning correlation: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/warning_correlation.csv`
+- Joined probe/held-out rows: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/pas_joined_probe_heldout.csv`
+- Figures:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/path_divergence.pdf`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/endpoint_ambiguity_scatter.pdf`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/warning_correlation.pdf`
+
+Observed seed `3025` values:
+
+- `FF-Endpoint` regret at held-out `0.40`: `0.5581475044600985`.
+- `PAS-Plus` regret at held-out `0.40`: `0.5581475044600985`.
+- `PAS-Slope` regret at held-out `0.40`: `0.0`.
+- `PAS-Curv` regret at held-out `0.40`: `0.5581475044600985`.
+- `Oracle-heldout` candidate: `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048`.
+- `PAS-Slope` selected the oracle candidate.
+- `PAS-Curv` selected the endpoint candidate in this pool, so curvature should be treated as an ablation.
+- Slope correlation with held-out degradation: Pearson `0.8337100870651009`, Spearman `0.8285714285714285`.
+- Curvature correlation with held-out degradation: Pearson `0.391305442885115`, Spearman `0.41052631578947363`.
+
+## P0 Two-Pool Table Staging
+
+| Pool | FF-Endpoint Regret | PAS-Plus Regret | PAS-Slope Regret | PAS-Curv Regret | Random Mean Regret | Slope Spearman | Curv Spearman | Artifact |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `seed2025` | `0.27734373462907325` | `0.27734373462907325` | `0.0` | `0.0` | `0.14033592972231104` | `0.8030075187969924` | `0.5969924812030075` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv` |
+| `seed3025` | `0.5581475044600985` | `0.5581475044600985` | `0.0` | `0.5581475044600985` | `0.27907375223004927` | `0.8285714285714285` | `0.41052631578947363` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selection_regret.csv` |
+
+Interpretation guardrail:
+
+- `PAS-Slope` is the current strongest P0 selection rule.
+- `PAS-Plus` does not improve over endpoint in these two pools.
+- `PAS-Curv` is mixed: it matches oracle in `seed2025` but fails in `seed3025`.
+- This is enough to stage a P0 table, but not enough for a broad model-general claim.
