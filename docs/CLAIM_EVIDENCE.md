@@ -165,3 +165,46 @@ Priority order after two-pool P0:
 4. Overhead summary:
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.csv`
    - missing GPU-hour accounting must be marked explicitly rather than guessed.
+
+## Cross-Model PAS Pilot Evidence
+
+Status: OPT-1.3B/WikiText-2 pilot completed; no selection-regret gain because endpoint is already oracle in this pool.
+
+Protocol recorded on 2026-05-20:
+
+- Model/dataset: `OPT-1.3B` on `WikiText-2`.
+- Candidate pool: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_candidates_seed2025/candidates`.
+- PAS output: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025`.
+- Seed: `2025`.
+- Target sparsity: `0.30`.
+- Probe budgets: `0.25 / 0.30 / 0.35`.
+- Held-out future budget: `0.40`, analysis-only.
+- Candidate count: `top_k=20`.
+- Fixed shortlist rule: `top-2-by-ell_0`.
+- Probe samples: `16`.
+- Held-out samples: `32`.
+
+Primary artifacts:
+
+- Manifest: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/artifact_manifest.json`
+- PAS regret table: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/selection_regret.csv`
+- Warning correlation: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/warning_correlation.csv`
+- Joined probe/held-out rows: `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/pas_joined_probe_heldout.csv`
+- Figures:
+  - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/path_divergence.pdf`
+  - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/endpoint_ambiguity_scatter.pdf`
+  - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/warning_correlation.pdf`
+
+Observed OPT-1.3B pilot values:
+
+- `FF-Endpoint`, `PAS-Plus`, `PAS-Slope`, `PAS-Curv`, and `Oracle-heldout` all select `p0_candidates_opt13b_seed2025_gpu2_opt-1.3b_seed2027_step000010_ep000010`.
+- Held-out `ell_h`: `5.113950659556641`; held-out PPL: `166.32615661621094`.
+- Selection regret for all controlled deterministic rules: `0.0`.
+- `Random-shortlist` regret mean/std: `0.5948401192835622` / `0.6020215478269607`.
+- Slope correlation with held-out degradation: Pearson `0.6603016220996479`, Spearman `0.5774436090225563`.
+- Curvature correlation with held-out degradation: Pearson `0.17611873583956558`, Spearman `0.17142857142857143`.
+
+Interpretation guardrail:
+
+- This supports cross-model feasibility and a positive slope/degradation relationship.
+- It does not show PAS-Slope beating endpoint for OPT-1.3B, because endpoint already selects the held-out oracle candidate.

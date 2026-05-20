@@ -575,6 +575,29 @@ export RUN_PAS=true
 bash scripts/run_pas_p0_server.sh
 ```
 
+Observed P2 OPT-1.3B pilot, recorded on 2026-05-20:
+
+```text
+probe rows: 20
+held-out rows: 20
+seed: 2025
+shortlist: top-2-by-ell_0
+probe samples: 16
+held-out samples: 32
+
+Selected candidate for FF-Endpoint/PAS-Plus/PAS-Slope/PAS-Curv/Oracle:
+p0_candidates_opt13b_seed2025_gpu2_opt-1.3b_seed2027_step000010_ep000010
+
+selected ell_h: 5.113950659556641
+selected PPL: 166.32615661621094
+deterministic-rule regret: 0.0
+Random-shortlist regret mean/std: 0.5948401192835622 / 0.6020215478269607
+slope correlation: Pearson 0.6603016220996479, Spearman 0.5774436090225563
+curvature correlation: Pearson 0.17611873583956558, Spearman 0.17142857142857143
+```
+
+P2 status: completed as a cross-model feasibility pilot. It does not show PAS-Slope beating endpoint on OPT-1.3B because endpoint already selects the held-out oracle candidate.
+
 P3 compensation-aligned final evaluation for seed `3025`, no reconstruction/calibration unless the same flag is deliberately enabled for both rules:
 
 ```bash
