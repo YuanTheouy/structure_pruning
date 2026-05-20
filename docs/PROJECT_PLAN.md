@@ -354,7 +354,7 @@ Paper experiment table staging:
 | Slope warning correlation | Pearson `0.7119764114534842`, Spearman `0.8030075187969924` | `warning_correlation.csv` |
 | Curvature warning correlation | Pearson `0.5427058989743604`, Spearman `0.5969924812030075` | `warning_correlation.csv` |
 
-Keep these values in the evidence log until the high-sample selected-candidate recheck and second seed pool finish. Do not paste them into final manuscript tables as final claims yet.
+Keep these values in the evidence log until the second seed pool finishes. Do not paste them into final manuscript tables as final claims yet.
 
 ### Selected-Candidate High-Sample Recheck
 
@@ -384,6 +384,29 @@ Expected artifacts:
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_manifest.json
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_commands.sh
 ```
+
+Observed high-sample recheck, recorded on 2026-05-20:
+
+```text
+num_samples: 64
+FF-Endpoint/PAS-Plus candidate: p0_candidates_parallel_gpu0_opt-2.7b_seed2025_step000004_ep000004
+FF-Endpoint/PAS-Plus ell_h: 5.119642685746274
+FF-Endpoint/PAS-Plus PPL: 167.2755889892578
+FF-Endpoint/PAS-Plus regret: 0.27299068075105826
+
+PAS-Slope/PAS-Curv/Oracle candidate: p0_candidates_parallel_gpu4_opt-2.7b_seed2029_step000047_ep000047
+PAS-Slope/PAS-Curv/Oracle ell_h: 4.8466520049952155
+PAS-Slope/PAS-Curv/Oracle PPL: 127.31343078613281
+PAS-Slope/PAS-Curv/Oracle regret: 0.0
+```
+
+Paper table staging after the high-sample recheck:
+
+| Paper Row | Current High-Sample P0 Pilot Value | Source |
+| --- | --- | --- |
+| FF-Endpoint/PAS-Plus selected-candidate regret | `0.27299068075105826` | `selected_heldout_recheck_regret.csv` |
+| PAS-Slope/PAS-Curv selected-candidate regret | `0.0` | `selected_heldout_recheck_regret.csv` |
+| Best rechecked selected candidate | `p0_candidates_parallel_gpu4_opt-2.7b_seed2029_step000047_ep000047` | `selected_heldout_recheck_regret.csv` |
 
 ### Second Seed Pool
 

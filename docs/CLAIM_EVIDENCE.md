@@ -35,6 +35,10 @@ Primary artifacts:
 - PAS regret table: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv`
 - Warning correlation: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.csv`
 - Joined probe/held-out rows: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/pas_joined_probe_heldout.csv`
+- High-sample selected-candidate recheck:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_regret.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_manifest.json`
 - Figures:
   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/path_divergence.pdf`
   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/endpoint_ambiguity_scatter.pdf`
@@ -50,11 +54,20 @@ Observed P0 pilot values:
 - Slope correlation with held-out degradation: Pearson `0.7119764114534842`, Spearman `0.8030075187969924`.
 - Curvature correlation with held-out degradation: Pearson `0.5427058989743604`, Spearman `0.5969924812030075`.
 
+Selected-candidate high-sample `0.40` recheck, recorded on 2026-05-20:
+
+- Recheck samples: `64`.
+- `FF-Endpoint` / `PAS-Plus` candidate: `p0_candidates_parallel_gpu0_opt-2.7b_seed2025_step000004_ep000004`.
+- `FF-Endpoint` / `PAS-Plus` rechecked `ell_h`: `5.119642685746274`; rechecked PPL: `167.2755889892578`; regret vs. best rechecked: `0.27299068075105826`.
+- `PAS-Slope` / `PAS-Curv` / `Oracle-heldout` candidate: `p0_candidates_parallel_gpu4_opt-2.7b_seed2029_step000047_ep000047`.
+- `PAS-Slope` / `PAS-Curv` / `Oracle-heldout` rechecked `ell_h`: `4.8466520049952155`; rechecked PPL: `127.31343078613281`; regret vs. best rechecked: `0.0`.
+
 Paper table staging:
 
 | Table Slot | Current Fill | Artifact Source | Status |
 | --- | --- | --- | --- |
-| PAS same-pool selection regret, P0 OPT-2.7B/WikiText-2 | FF `0.27734373462907325`, PAS-Slope `0.0`, PAS-Curv `0.0`, Oracle `0.0` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv` | Pilot-only; needs high-sample selected-candidate recheck and second seed pool. |
+| PAS same-pool selection regret, P0 OPT-2.7B/WikiText-2 | FF `0.27734373462907325`, PAS-Slope `0.0`, PAS-Curv `0.0`, Oracle `0.0` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv` | Pilot-only; high-sample selected-candidate recheck completed; needs second seed pool. |
+| Selected-candidate high-sample `0.40` recheck, P0 OPT-2.7B/WikiText-2 | FF/PAS-Plus regret `0.27299068075105826`; PAS-Slope/PAS-Curv/Oracle regret `0.0` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_regret.csv` | Supports the selected-candidate direction in this pool; still pilot-only until second seed pool. |
 | Warning-to-heldout correlation, P0 OPT-2.7B/WikiText-2 | slope Spearman `0.8030075187969924`, curvature Spearman `0.5969924812030075` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.csv` | Pilot-only; `0.40` held-out was not used for selection. |
 | Path/ambiguity figures | `path_divergence.pdf`, `endpoint_ambiguity_scatter.pdf`, `warning_correlation.pdf` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/` | Ready as P0 pilot figures; not final paper figures yet. |
 
@@ -62,4 +75,4 @@ Interpretation guardrail:
 
 - This supports the PAS direction for one controlled P0 pool.
 - It does not establish universal PAS improvement.
-- Before filling manuscript tables as final evidence, run a selected-candidate high-sample `0.40` recheck and at least one independent seed pool.
+- Before filling manuscript tables as final evidence, run at least one independent seed pool.
