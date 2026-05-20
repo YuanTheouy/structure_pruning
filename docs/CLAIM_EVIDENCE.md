@@ -161,10 +161,44 @@ Priority order after two-pool P0:
    - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/artifact_manifest.json`
 3. Compensation-aligned final evaluation:
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon/pas_compensation_aligned_eval.csv`
-   - compare `FF-Endpoint` and `PAS-Slope` with identical recovery settings.
+   - completed with identical no-reconstruction settings for `FF-Endpoint` and `PAS-Slope`.
 4. Overhead summary:
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_overhead/pas_overhead_summary.csv`
    - missing GPU-hour accounting must be marked explicitly rather than guessed.
+
+## Compensation-Aligned Final Evaluation Evidence
+
+Status: seed `3025` final target-sparsity evaluation completed without reconstruction/calibration.
+
+Protocol recorded on 2026-05-20:
+
+- Model/dataset: `OPT-2.7B` on `WikiText-2`.
+- Source selection artifact: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json`.
+- Output directory: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon`.
+- Rules compared: `FF-Endpoint` vs. `PAS-Slope`.
+- Target sparsity: `0.30`.
+- Evaluation samples: `64`.
+- Reconstruction/calibration: disabled for both rules.
+
+Primary artifacts:
+
+- Evaluation CSV: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon/pas_compensation_aligned_eval.csv`
+- Manifest: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon/pas_compensation_aligned_manifest.json`
+- Commands: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon/pas_compensation_aligned_commands.sh`
+
+Observed final target-sparsity values:
+
+- `FF-Endpoint` candidate: `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037`.
+- `FF-Endpoint` final `ell`: `4.433705344243264`; final PPL: `84.24298858642578`; regret vs. best final rule: `0.0`.
+- `PAS-Slope` candidate: `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048`.
+- `PAS-Slope` final `ell`: `4.499888504299609`; final PPL: `90.00709533691406`; regret vs. best final rule: `0.06618316005634473`.
+- Total eval seconds: `233.10833382606506`.
+
+Interpretation guardrail:
+
+- At the target sparsity `0.30`, FF-Endpoint is better in this no-reconstruction final evaluation.
+- At held-out future sparsity `0.40`, PAS-Slope is better in the seed `3025` recheck.
+- Therefore the current evidence supports a trade-off between endpoint quality and future robustness, not a blanket claim that PAS-Slope wins every metric.
 
 ## Cross-Model PAS Pilot Evidence
 

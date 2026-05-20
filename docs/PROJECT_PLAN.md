@@ -617,6 +617,28 @@ python pas_compile_selected_final.py \
   --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval_norecon
 ```
 
+Observed P3 no-reconstruction final evaluation, recorded on 2026-05-20:
+
+```text
+target_sparsity: 0.30
+rules: FF-Endpoint, PAS-Slope
+num_samples: 64
+recon_enabled: false
+total_eval_seconds: 233.10833382606506
+
+FF-Endpoint candidate: p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037
+FF-Endpoint final ell: 4.433705344243264
+FF-Endpoint final PPL: 84.24298858642578
+FF-Endpoint final regret: 0.0
+
+PAS-Slope candidate: p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048
+PAS-Slope final ell: 4.499888504299609
+PAS-Slope final PPL: 90.00709533691406
+PAS-Slope final regret: 0.06618316005634473
+```
+
+P3 status: completed with aligned no-reconstruction settings. At target sparsity `0.30`, FF-Endpoint remains better; at held-out `0.40`, PAS-Slope remains better. Treat this as endpoint-quality vs. future-robustness evidence, not as a blanket PAS win.
+
 P4 overhead summary after P1 and P3 artifacts exist:
 
 ```bash
