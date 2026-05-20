@@ -521,6 +521,25 @@ python pas_selected_heldout_recheck.py \
   --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64
 ```
 
+Observed P1 high-sample recheck, recorded on 2026-05-20:
+
+```text
+num_samples: 64
+total_eval_seconds: 221.16922211647034
+
+PAS-Slope/Oracle candidate: p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048
+PAS-Slope/Oracle ell_h: 4.954576021785408
+PAS-Slope/Oracle PPL: 141.8224639892578
+PAS-Slope/Oracle regret: 0.0
+
+FF-Endpoint/PAS-Plus/PAS-Curv candidate: p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037
+FF-Endpoint/PAS-Plus/PAS-Curv ell_h: 5.594643081425589
+FF-Endpoint/PAS-Plus/PAS-Curv PPL: 268.98162841796875
+FF-Endpoint/PAS-Plus/PAS-Curv regret: 0.6400670596401818
+```
+
+P1 status: passed. The seed `3025` PAS-Slope candidate remains better than FF-Endpoint under `64` held-out samples.
+
 P2 cross-model PAS pilot, preferred `OPT-1.3B`:
 
 ```bash

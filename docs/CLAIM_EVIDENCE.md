@@ -119,6 +119,20 @@ Observed seed `3025` values:
 - Slope correlation with held-out degradation: Pearson `0.8337100870651009`, Spearman `0.8285714285714285`.
 - Curvature correlation with held-out degradation: Pearson `0.391305442885115`, Spearman `0.41052631578947363`.
 
+Selected-candidate high-sample `0.40` recheck for seed `3025`, recorded on 2026-05-20:
+
+- Recheck artifacts:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_manifest.json`
+- Recheck samples: `64`.
+- Total eval seconds: `221.16922211647034`.
+- `PAS-Slope` / `Oracle-heldout` candidate: `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048`.
+- `PAS-Slope` / `Oracle-heldout` rechecked `ell_h`: `4.954576021785408`; rechecked PPL: `141.8224639892578`; regret vs. best rechecked: `0.0`.
+- `FF-Endpoint` / `PAS-Plus` / `PAS-Curv` candidate: `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037`.
+- `FF-Endpoint` / `PAS-Plus` / `PAS-Curv` rechecked `ell_h`: `5.594643081425589`; rechecked PPL: `268.98162841796875`; regret vs. best rechecked: `0.6400670596401818`.
+- Success condition satisfied: PAS-Slope selected candidate remains better than FF-Endpoint under `64` held-out samples.
+
 ## P0 Two-Pool Table Staging
 
 | Pool | FF-Endpoint Regret | PAS-Plus Regret | PAS-Slope Regret | PAS-Curv Regret | Random Mean Regret | Slope Spearman | Curv Spearman | Artifact |
@@ -137,10 +151,10 @@ Interpretation guardrail:
 
 Priority order after two-pool P0:
 
-1. Seed `3025` selected-candidate high-sample recheck:
+1. Seed `3025` selected-candidate high-sample recheck: completed.
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv`
    - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv`
-   - success condition: PAS-Slope selected candidate remains better than FF-Endpoint at held-out `0.40` with `64` samples.
+   - success condition satisfied: PAS-Slope selected candidate remains better than FF-Endpoint at held-out `0.40` with `64` samples.
 2. Cross-model PAS pilot, preferred `OPT-1.3B`:
    - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/selection_regret.csv`
    - `/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025/warning_correlation.csv`
