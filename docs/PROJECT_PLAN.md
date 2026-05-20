@@ -132,9 +132,9 @@ Expected early-warning output:
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew
 ```
 
-### Larger P0 Settings
+### Legacy Larger P0 Settings
 
-After the smoke test completes, increase budget gradually:
+This older high-budget path is kept for reference. For the current PAS P0, do not start from `TRAIN_EPISODES=5000`; use the PAS P0 pilot commands below and scale only after a clean pilot reproduces.
 
 ```bash
 cd /workspace/structure_pruning
@@ -300,6 +300,140 @@ Interpretation guardrail: this is only a smoke-test artifact proving that the pi
 | Main high-sparsity table | `high_sparsity_results.csv` |
 | Early-warning ablation table | output from `make_ablation_table.py` or `compare_endpoint_slope_curvature.py` |
 | Overhead table | output from `summarize_overhead.py` |
+
+## PAS P0 Pilot Runbook
+
+The current paper direction is Path-Aware Selection (PAS): endpoint shortlist plus same-vector local path warning. The held-out `0.40` budget is only for analysis and must not be used for selection, threshold tuning, candidate filtering, or early stopping.
+
+### Current Clean P0 Pilot
+
+Recorded on 2026-05-20:
+
+- Candidate pool: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates/candidates`
+- PAS output: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas`
+- `top_k=20`
+- Fixed shortlist: `top-2-by-ell_0`
+- Probe budgets: `0.25 / 0.30 / 0.35`
+- Held-out future: `0.40`
+- Probe samples: `16`
+- Held-out samples: `32`
+
+Primary artifact paths:
+
+```text
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/artifact_manifest.json
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/pas_joined_probe_heldout.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/path_divergence.pdf
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/endpoint_ambiguity_scatter.pdf
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.pdf
+```
+
+Observed pilot summary:
+
+```text
+FF-Endpoint regret: 0.27734373462907325
+PAS-Slope regret: 0.0
+PAS-Curv regret: 0.0
+PAS-Plus regret: 0.27734373462907325
+slope correlation: Pearson 0.7119764114534842, Spearman 0.8030075187969924
+curvature correlation: Pearson 0.5427058989743604, Spearman 0.5969924812030075
+```
+
+Guardrail: this is a P0 pilot, not a final manuscript conclusion.
+
+Paper experiment table staging:
+
+| Paper Row | Current P0 Pilot Value | Source |
+| --- | --- | --- |
+| FF-Endpoint selection regret | `0.27734373462907325` | `selection_regret.csv` |
+| PAS-Slope selection regret | `0.0` | `selection_regret.csv` |
+| PAS-Curv selection regret | `0.0` | `selection_regret.csv` |
+| Random-shortlist regret | mean `0.14033592972231104`, std `0.13866188258062662` | `selection_regret.csv` |
+| Slope warning correlation | Pearson `0.7119764114534842`, Spearman `0.8030075187969924` | `warning_correlation.csv` |
+| Curvature warning correlation | Pearson `0.5427058989743604`, Spearman `0.5969924812030075` | `warning_correlation.csv` |
+
+Keep these values in the evidence log until the high-sample selected-candidate recheck and second seed pool finish. Do not paste them into final manuscript tables as final claims yet.
+
+### Selected-Candidate High-Sample Recheck
+
+This rechecks only the unique candidates already selected by `FF-Endpoint`, `PAS-Plus`, `PAS-Slope`, `PAS-Curv`, and `Oracle-heldout`. It does not change the selection rule.
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python pas_selected_heldout_recheck.py \
+  --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selected_candidates.json \
+  --model /workspace/Models/opt-2.7b \
+  --model_name opt-2.7b \
+  --future_sparsity 0.40 \
+  --num_samples 64 \
+  --batch_size 50 \
+  --seed 2025 \
+  --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64
+```
+
+Expected artifacts:
+
+```text
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_regret.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_manifest.json
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64/selected_heldout_recheck_commands.sh
+```
+
+### Second Seed Pool
+
+Run a second independent pool before treating PAS as more than a pilot signal. Use separate output directories so the current P0 artifacts remain intact.
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+export MODEL=/workspace/Models/opt-2.7b
+export MODEL_NAME=opt-2.7b
+export WIKITEXT2_PATH=/workspace/datasets/wikitext/wikitext-2-raw-v1
+export CKPT_ROOT=/workspace/ckpts
+
+export GPU_IDS="0 1 2 3 4 5 6 7"
+export TARGET_SPARSITY=0.30
+export DELTA=0.05
+export TRAIN_EPISODES=400
+export N_SAMPLES=16
+export TOP_K=20
+export SHORTLIST_SIZE=2
+export RANDOM_REPEATS=500
+export NUM_COLLECT=5
+export LEARNING_EPOCH=3
+export HELDOUT_N_SAMPLES=32
+export SEED=3025
+
+export RUN_ID_PREFIX=p0_candidates_seed3025
+export MERGED_CANDIDATE_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates
+export CANDIDATE_DIR=$MERGED_CANDIDATE_DIR
+export EW_OUTPUT_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew_seed3025
+export PAS_OUTPUT_DIR=/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025
+
+export RUN_CANDIDATE_SEARCH=true
+export RUN_PROBE=true
+export RUN_PAS=true
+
+bash scripts/run_pas_p0_server.sh
+```
+
+Expected artifacts:
+
+```text
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates/candidates.jsonl
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew_seed3025/probe_results.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/artifact_manifest.json
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selection_regret.csv
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/warning_correlation.csv
+```
 
 ## Review Questions
 

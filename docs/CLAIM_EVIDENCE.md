@@ -12,3 +12,54 @@
 ## Evidence Discipline
 
 Do not fill manuscript high-sparsity or correlation claims from intuition. A claim becomes manuscript-ready only when the supporting CSV/JSON/plot path is recorded here.
+
+## Current PAS P0 Pilot Evidence
+
+Status: clean P0 pilot, not final paper evidence by itself.
+
+Protocol recorded on 2026-05-20:
+
+- Model/dataset: `OPT-2.7B` on `WikiText-2`.
+- Candidate pool: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates/candidates`.
+- Target sparsity: `0.30`.
+- Probe budgets: `0.25 / 0.30 / 0.35`.
+- Held-out future budget: `0.40`, recorded as analysis-only.
+- Candidate count: `top_k=20`.
+- Fixed shortlist rule: `top-2-by-ell_0`.
+- Probe samples: `16`.
+- Held-out samples: `32`.
+
+Primary artifacts:
+
+- Manifest: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/artifact_manifest.json`
+- PAS regret table: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv`
+- Warning correlation: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.csv`
+- Joined probe/held-out rows: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/pas_joined_probe_heldout.csv`
+- Figures:
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/path_divergence.pdf`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/endpoint_ambiguity_scatter.pdf`
+  - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.pdf`
+
+Observed P0 pilot values:
+
+- `FF-Endpoint` regret at held-out `0.40`: `0.27734373462907325`.
+- `PAS-Slope` regret at held-out `0.40`: `0.0`.
+- `PAS-Curv` regret at held-out `0.40`: `0.0`.
+- `PAS-Plus` regret at held-out `0.40`: `0.27734373462907325`.
+- `Oracle-heldout` candidate: `p0_candidates_parallel_gpu4_opt-2.7b_seed2029_step000047_ep000047`.
+- Slope correlation with held-out degradation: Pearson `0.7119764114534842`, Spearman `0.8030075187969924`.
+- Curvature correlation with held-out degradation: Pearson `0.5427058989743604`, Spearman `0.5969924812030075`.
+
+Paper table staging:
+
+| Table Slot | Current Fill | Artifact Source | Status |
+| --- | --- | --- | --- |
+| PAS same-pool selection regret, P0 OPT-2.7B/WikiText-2 | FF `0.27734373462907325`, PAS-Slope `0.0`, PAS-Curv `0.0`, Oracle `0.0` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/selection_regret.csv` | Pilot-only; needs high-sample selected-candidate recheck and second seed pool. |
+| Warning-to-heldout correlation, P0 OPT-2.7B/WikiText-2 | slope Spearman `0.8030075187969924`, curvature Spearman `0.5969924812030075` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/warning_correlation.csv` | Pilot-only; `0.40` held-out was not used for selection. |
+| Path/ambiguity figures | `path_divergence.pdf`, `endpoint_ambiguity_scatter.pdf`, `warning_correlation.pdf` | `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/` | Ready as P0 pilot figures; not final paper figures yet. |
+
+Interpretation guardrail:
+
+- This supports the PAS direction for one controlled P0 pool.
+- It does not establish universal PAS improvement.
+- Before filling manuscript tables as final evidence, run a selected-candidate high-sample `0.40` recheck and at least one independent seed pool.
