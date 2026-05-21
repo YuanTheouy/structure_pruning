@@ -412,6 +412,56 @@ ridge recovery protocol for every candidate.
 Interpretation guardrail: if P0 or P1 fails, do not claim PAS improves
 recovery and do not start RPVS as a rescue experiment.
 
+P2 downstream preparation, gated until P1 passes:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+bash scripts/pas_run_downstream_batch.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --gpu-ids "0 1 2 3 4 5 6 7" \
+  --tasks piqa,hellaswag,winogrande,boolq \
+  --limit 100 \
+  --batch-size 4 \
+  --eval-num-samples 64 \
+  --recovery-method ffn_only_ridge_reconstruction \
+  --recon-sample 16 \
+  --dry-run
+```
+
+The command above only materializes shard commands. If P1 passes and the
+commands look right, run the same command without `--dry-run` and with
+`RUN_DOWNSTREAM_NOW=true`. P2 recompiles each candidate with the same
+`ffn_only_ridge_reconstruction` protocol and evaluates downstream tasks in the
+same process, avoiding direct loading of irregular pruned checkpoints.
+
+Collect P2 outputs after execution:
+
+```bash
+python scripts/pas_collect_downstream_results.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
+  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
 P4 one-more-setting command slot:
 
 - Preferred next setting:

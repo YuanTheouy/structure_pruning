@@ -170,6 +170,14 @@ def parse_args():
                         help='Enable downstream task evaluation (true/false)')
     parser.add_argument('--delayed_downstream_eval', action='store_true',
                         help='Delay downstream evaluation until after pruning+reconstruction is complete (for export mode)')
+    parser.add_argument('--downstream_output', default=None, type=str,
+                        help='Optional JSON path for delayed downstream task results')
+    parser.add_argument('--downstream_tasks', default='boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa', type=str,
+                        help='Comma-separated downstream task names for lm-eval')
+    parser.add_argument('--downstream_limit', default=0, type=int,
+                        help='Optional lm-eval sample limit per task; 0 means full task')
+    parser.add_argument('--downstream_batch_size', default=4, type=int,
+                        help='Batch size for downstream lm-eval wrapper')
 
     parser.add_argument('--learning_epoch', default=10, type=int, help='')
     parser.add_argument('--tau', default=0.01, type=float, help='moving average for target network')
@@ -742,6 +750,32 @@ def run_compile_best(env, args):
 
     print(f"=> Final static checkpoint saved to {export_path}")
     print(f"=> Final metadata saved to {metadata_path}")
+    if getattr(args, 'delayed_downstream_eval', False) and getattr(args, 'enable_downstream', False):
+        print("\n=> Performing delayed downstream task evaluation on compiled model...")
+        success = False
+        try:
+            success = env.test_model(env.model)
+            if success:
+                print("=> Post-compile downstream task evaluation completed successfully")
+            else:
+                print("=> Post-compile downstream task evaluation completed with warnings")
+        except Exception as exc:
+            print(f"=> WARNING: Post-compile downstream evaluation failed: {str(exc)}")
+        if args.downstream_output:
+            dump_json(args.downstream_output, {
+                "candidate_id": candidate_id,
+                "selected_mode": best_payload.get("selected_mode"),
+                "model": args.model,
+                "model_name": args.model_name,
+                "dataset_name": args.dataset_name,
+                "checkpoint_path": export_path,
+                "metadata_path": metadata_path,
+                "downstream_success": bool(success),
+                "downstream_tasks": args.downstream_tasks,
+                "downstream_limit": args.downstream_limit,
+                "downstream_results": getattr(env, "last_downstream_results", None),
+            })
+            print(f"=> Downstream results saved to {args.downstream_output}")
     return export_path
 
 

@@ -253,6 +253,7 @@ class ChannelPruningEnv:
         self.recon = args.recon
         self.recon_prune = args.recon
         self.recon_ffn_only = getattr(args, "recon_ffn_only", False)
+        self.last_downstream_results = None
 
         self.export_model = export_model
         self.use_new_input = use_new_input
@@ -1773,18 +1774,28 @@ class ChannelPruningEnv:
             model_wrapper = HFLM(
                 pretrained=model,
                 tokenizer=self.tokenizer,
-                batch_size=4,
+                batch_size=getattr(self.args, "downstream_batch_size", 4),
             )
             
-            task_names = ["boolq", "piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"]
+            task_names = [
+                task.strip()
+                for task in getattr(
+                    self.args,
+                    "downstream_tasks",
+                    "boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa",
+                ).split(",")
+                if task.strip()
+            ]
             print(f"=> Evaluating on {len(task_names)} downstream tasks: {task_names}")
+            limit = getattr(self.args, "downstream_limit", 0)
+            limit = limit if limit and limit > 0 else None
             
             # 使用原始的 simple_evaluate API，补丁会在后台生效
             results = evaluator.simple_evaluate(
                 model=model_wrapper,
                 tasks=task_names,
                 num_fewshot=0,
-                # limit=100,
+                limit=limit,
                 bootstrap_iters=100,
                 verbosity="INFO"
             )
@@ -1792,6 +1803,7 @@ class ChannelPruningEnv:
             # --- 处理结果 (逻辑不变) ---
             print("=> Downstream Task Results (lm-eval-harness):")
             task_scores = {}
+            rows = []
             if "results" in results:
                 for task_name, task_result in results["results"].items():
                     if isinstance(task_result, dict):
@@ -1801,6 +1813,7 @@ class ChannelPruningEnv:
                             if metric in task_result:
                                 score = task_result[metric]
                                 task_scores[task_name] = score
+                                rows.append({"task": task_name, "metric": metric, "score": float(score)})
                                 print(f"   ✅ {task_name}: {score:.4f} (found metric: '{metric}')")
                                 found_metric = True
                                 break
@@ -1808,6 +1821,13 @@ class ChannelPruningEnv:
                             print(f"   ⚠️ Could not find a main metric for task '{task_name}' in its results.")
                 if task_scores:
                     avg_score = sum(task_scores.values()) / len(task_scores)
+                    rows.append({"task": "average", "metric": "mean_primary_score", "score": float(avg_score)})
+                    self.last_downstream_results = {
+                        "eval_type": "lm_eval",
+                        "tasks": task_names,
+                        "limit": limit,
+                        "rows": rows,
+                    }
                     print(f"=> Average downstream task performance: {avg_score:.4f}")
                     return True
                 else:
@@ -1826,7 +1846,26 @@ class ChannelPruningEnv:
             # --- 关键: 无论成功或失败，都恢复原始函数 ---
             lm_eval.api.task.ConfigurableTask.__init__ = original_init
             print("✅ Monkey-patch for local PIQA dataset restored.")
-        
+
+    def _evaluate_with_lightweight(self, model):
+        """Fallback lightweight downstream evaluator used only when lm-eval is unavailable."""
+        sample_count = getattr(self.args, "downstream_limit", 0)
+        sample_count = sample_count if sample_count and sample_count > 0 else 100
+        evaluator_obj = LightweightEvaluator(model, self.tokenizer)
+        results = evaluator_obj.evaluate_all(num_samples_per_task=sample_count)
+        rows = [
+            {"task": key.rsplit("_", 1)[0], "metric": key, "score": float(value)}
+            for key, value in results.items()
+            if isinstance(value, (int, float))
+        ]
+        self.last_downstream_results = {
+            "eval_type": "lightweight",
+            "tasks": getattr(self.args, "downstream_tasks", ""),
+            "limit": sample_count,
+            "rows": rows,
+        }
+        return bool(rows)
+
     def _simple_generation_test(self, model):
         """
         备选的简单文本生成测试

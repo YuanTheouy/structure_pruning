@@ -937,6 +937,68 @@ but ridge recovery is applied only to FFN modules. This avoids the legacy OPT
 head-reconstruction shape mismatch while keeping one identical recovery
 protocol for every candidate.
 
+P2 downstream task retention is prepared but gated until P1 passes. Generate
+the commands first:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+bash scripts/pas_run_downstream_batch.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --gpu-ids "0 1 2 3 4 5 6 7" \
+  --tasks piqa,hellaswag,winogrande,boolq \
+  --limit 100 \
+  --batch-size 4 \
+  --eval-num-samples 64 \
+  --recovery-method ffn_only_ridge_reconstruction \
+  --recon-sample 16 \
+  --dry-run
+```
+
+If P1 passes, execute the same command with:
+
+```bash
+RUN_DOWNSTREAM_NOW=true bash scripts/pas_run_downstream_batch.sh ...
+```
+
+Expected P2 artifacts:
+
+```text
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_multigpu_manifest.json
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_launch.tsv
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_eval/*/downstream_results.json
+/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv
+/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.md
+/workspace/ckpts/pas_stress_recovery/downstream_manifest_opt27b.json
+```
+
+P2 collect command:
+
+```bash
+python scripts/pas_collect_downstream_results.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
+  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
 Optional figures after P0/P1:
 
 ```bash
