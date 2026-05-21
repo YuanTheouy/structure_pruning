@@ -362,7 +362,7 @@ python scripts/pas_build_recovery_subset.py \
   --selected-candidates-json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
   --output-dir /workspace/ckpts/pas_stress_recovery
 
-bash scripts/pas_run_recovery_batch.sh \
+bash scripts/pas_run_recovery_multigpu.sh \
   --model /workspace/Models/opt-2.7b \
   --model-name opt-2.7b \
   --dataset wikitext2 \
@@ -373,6 +373,7 @@ bash scripts/pas_run_recovery_batch.sh \
   --heldout-sigma 0.40 \
   --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
   --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --gpu-ids "0 1 2 3 4 5 6 7" \
   --batch-size 8 \
   --num-samples 64 \
   --recon-sample 16
@@ -393,7 +394,10 @@ python scripts/pas_collect_recovery_results.py \
 P1 expected artifacts:
 
 - `/workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv`
-- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands.sh`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_multigpu_manifest.json`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_launch.tsv`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands_gpu*.sh`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/logs/recovery_gpu*.log`
 - `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/recovery_analysis_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/recovery_manifest_opt27b.json`
