@@ -727,6 +727,27 @@ Expected P2 artifacts:
 
 The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only. The table columns use polished-draft metric names `PoBR_sigma`, `StressGain_h`, and `Regret_h`, and also include `uses_heldout_for_selection`, `artifact_source_target`, `artifact_source_heldout`, and `notes` so protocol mismatches are auditable rather than hidden. The older auxiliary figure aliases (`policy_path_lines`, `target_future_tradeoff`, `warning_correlation`) are still emitted for debugging, but the paper-ready names are `robustness_frontier`, `path_divergence`, and `sensitivity_correlation`.
 
+Server-reset P0-P2 result recorded on 2026-05-21:
+
+```text
+commit: b407d39
+processed pool: opt27b_seed3025
+candidate count: 20
+candidate pool: /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates
+missing pools after reset: opt27b_seed2025, opt13b_seed2025
+main table: /workspace/ckpts/pas_policy_selection_20260521/price_of_budget_robustness_seed3025.csv
+figures: /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/
+```
+
+Key rows from `price_of_budget_robustness_seed3025.csv`:
+
+| Rule | Candidate | `PoBR_sigma` | `StressGain_h` | `Regret_h` | target ell/ppl | stress ell/ppl |
+| --- | --- | --- | --- | --- | --- | --- |
+| `FF-Endpoint` | `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037` | `0.0` | `0.0` | `0.6400670596401818` | `4.342522166971652` / `76.90125274658203` | `5.594643081425589` / `268.98162841796875` |
+| `PAS-Slope` | `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048` | `0.04040185393219975` | `0.6400670596401818` | `0.0` | `4.382924020903852` / `80.07182312011719` | `4.954576021785408` / `141.8224639892578` |
+
+Protocol note: this consolidated table intentionally records `protocol_mismatch_target_probe_vs_selected_recheck` because target columns come from `probe_ell_sigma` and stress columns come from `selected_recheck_64`. Do not present it as compensation-aligned target/stress final evaluation without either rerunning the `0.30` no-recovery selected-candidate final eval or explicitly labeling target as probe-side `PoBR`.
+
 ### P3 Matched Future-Budget Eval
 
 The existing seed `3025` selected-candidate recheck is equivalent to the requested matched `40%` final eval: it uses the same selected priority-vector candidates, same model/dataset, `final_sparsity=0.40`, no reconstruction, and `64` samples. Materialize it under the required filenames:
@@ -745,7 +766,7 @@ python pas_export_future_eval_from_recheck.py \
   --future_sparsity 0.40 \
   --rules FF-Endpoint,PAS-Slope \
   --num_samples 64 \
-  --batch_size 50 \
+  --batch_size 8 \
   --seed 3025 \
   --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck
 ```
@@ -757,6 +778,15 @@ Expected artifacts:
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_manifest_40.json
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_commands_40.sh
 ```
+
+Server-reset P3 result recorded on 2026-05-21:
+
+| Rule | Candidate | ell | ppl | actual sparsity | `Regret_h` | eval seconds |
+| --- | --- | --- | --- | --- | --- | --- |
+| `FF-Endpoint` | `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037` | `5.594643081425589` | `268.98162841796875` | `0.39979534733172495` | `0.6400670596401818` | `122.88303422927856` |
+| `PAS-Slope` | `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048` | `4.954576021785408` | `141.8224639892578` | `0.3999388122211047` | `0.0` | `125.75517463684082` |
+
+Protocol match for the stress budget: yes. The materialized manifest states the selected-candidate recheck used `amc_searchPPO.py --job=compile`, `final_sparsity=0.40`, no reconstruction, same model/dataset, same sample count, and the same selected priority-vector candidates.
 
 ### P4 One More Setting
 

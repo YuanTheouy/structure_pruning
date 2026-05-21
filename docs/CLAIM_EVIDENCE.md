@@ -214,8 +214,23 @@ P0 consolidated policy-selection table:
 - Required interpretation:
   - metrics use polished-draft names: `PoBR_sigma`, `StressGain_h`, and `Regret_h`.
   - target-budget and stricter-budget values may come from different artifact protocols; `artifact_source_target`, `artifact_source_heldout`, and `notes` record this explicitly.
-  - seed `3025` includes final no-reconstruction target eval and selected-candidate `0.40` recheck values.
+  - after the server reset, seed `3025` includes probe-side target values and selected-candidate `0.40` recheck values; use the source columns before citing a compensation-aligned target/stress comparison.
   - `uses_heldout_for_selection` must be `no` for FF/PAS rows; `Oracle-heldout` is analysis-only.
+
+Completed server-reset run, recorded 2026-05-21:
+
+- Commit used on server: `b407d39`.
+- Processed pool: `opt27b_seed3025`; candidate count `20`.
+- Missing after server reset: prior `opt27b_seed2025` and `opt13b_seed2025` artifacts.
+- Candidate pool: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates`.
+- Main table: `/workspace/ckpts/pas_policy_selection_20260521/price_of_budget_robustness_seed3025.csv`.
+- Protocol status for the consolidated table: `protocol_mismatch_target_probe_vs_selected_recheck`; target columns come from `probe_ell_sigma`, stress columns come from `selected_recheck_64`.
+- Key rows:
+
+| Rule | Candidate | `PoBR_sigma` | `StressGain_h` | `Regret_h` | target ell/ppl | stress ell/ppl |
+| --- | --- | --- | --- | --- | --- | --- |
+| `FF-Endpoint` | `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037` | `0.0` | `0.0` | `0.6400670596401818` | `4.342522166971652` / `76.90125274658203` | `5.594643081425589` / `268.98162841796875` |
+| `PAS-Slope` | `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048` | `0.04040185393219975` | `0.6400670596401818` | `0.0` | `4.382924020903852` / `80.07182312011719` | `4.954576021785408` / `141.8224639892578` |
 
 P1 endpoint-compatibility sensitivity:
 
@@ -246,11 +261,23 @@ P3 matched stricter-budget final evaluation:
 
 - Existing selected-candidate recheck is protocol-equivalent to the requested matched `0.40` final eval: it uses `amc_searchPPO.py --job=compile`, `final_sparsity=0.40`, no reconstruction, same model/dataset, same sample count, and the same selected priority-vector candidates.
 - Materialization command:
-  - `python pas_export_future_eval_from_recheck.py --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json --recheck_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv --recheck_regret_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv --model /workspace/Models/opt-2.7b --model_name opt-2.7b --future_sparsity 0.40 --rules FF-Endpoint,PAS-Slope --num_samples 64 --batch_size 50 --seed 3025 --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck`
+  - `python pas_export_future_eval_from_recheck.py --selected_candidates_json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json --recheck_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck.csv --recheck_regret_csv /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64/selected_heldout_recheck_regret.csv --model /workspace/Models/opt-2.7b --model_name opt-2.7b --future_sparsity 0.40 --rules FF-Endpoint,PAS-Slope --num_samples 64 --batch_size 8 --seed 3025 --output_dir /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck`
 - Expected artifacts:
   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_eval_40.csv`
   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_manifest_40.json`
   - `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_commands_40.sh`
+
+Completed `0.40` matched eval materialization, recorded 2026-05-21:
+
+- Output directory: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck`.
+- Protocol match for stress budget: yes. The manifest states that the selected-candidate recheck used `amc_searchPPO.py --job=compile`, `final_sparsity=0.40`, no reconstruction, same model/dataset, same sample count, and the same selected priority-vector candidates.
+- Batch size: `8`; samples: `64`; reconstruction: disabled.
+- Key rows:
+
+| Rule | Candidate | ell | ppl | actual sparsity | `Regret_h` | eval seconds |
+| --- | --- | --- | --- | --- | --- | --- |
+| `FF-Endpoint` | `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037` | `5.594643081425589` | `268.98162841796875` | `0.39979534733172495` | `0.6400670596401818` | `122.88303422927856` |
+| `PAS-Slope` | `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048` | `4.954576021785408` | `141.8224639892578` | `0.3999388122211047` | `0.0` | `125.75517463684082` |
 
 P4 one-more-setting command slot:
 
