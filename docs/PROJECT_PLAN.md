@@ -713,15 +713,18 @@ Expected P2 artifacts:
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/endpoint_ambiguity_scatter.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/policy_path_lines.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/target_future_tradeoff.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/warning_correlation.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/endpoint_ambiguity_scatter.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/policy_path_lines.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/target_future_tradeoff.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/warning_correlation.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/endpoint_ambiguity_scatter.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/policy_path_lines.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/target_future_tradeoff.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/warning_correlation.pdf
 ```
 
-The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only.
+The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only. The table columns include `uses_heldout_for_selection`, `artifact_source_target`, `artifact_source_heldout`, and `notes` so protocol mismatches are auditable rather than hidden.
 
 ### P3 Matched Future-Budget Eval
 
@@ -751,6 +754,7 @@ Expected artifacts:
 ```text
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_eval_40.csv
 /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_manifest_40.json
+/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_final_eval40_from_recheck/pas_compensation_aligned_commands_40.sh
 ```
 
 ### P4 One More Setting
@@ -791,12 +795,46 @@ export RUN_PAS=true
 bash scripts/run_pas_p0_server.sh
 ```
 
+After the sigma `0.35` run completes, generate the required policy-selection report artifacts for this setting:
+
+```bash
+mkdir -p /workspace/ckpts/pas_policy_selection_sigma035
+
+cat > /workspace/ckpts/pas_policy_selection_sigma035/pool_config_sigma035.json <<'JSON'
+[
+  {
+    "pool_id": "opt27b_sigma035_seed2025",
+    "model": "opt-2.7b",
+    "dataset": "wikitext2",
+    "seed": "2025",
+    "sigma": 0.35,
+    "delta": 0.05,
+    "heldout_sigma": 0.45,
+    "pas_dir": "/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025",
+    "recheck_dir": "",
+    "final_eval_dir": ""
+  }
+]
+JSON
+
+python pas_policy_selection_report.py \
+  --pool_config /workspace/ckpts/pas_policy_selection_sigma035/pool_config_sigma035.json \
+  --artifact_suffix sigma035 \
+  --output_dir /workspace/ckpts/pas_policy_selection_sigma035
+```
+
 Expected artifacts:
 
 ```text
 /workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/artifact_manifest.json
 /workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/selection_regret.csv
 /workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/warning_correlation.csv
+/workspace/ckpts/pas_policy_selection_sigma035/policy_selection_tradeoff_sigma035.csv
+/workspace/ckpts/pas_policy_selection_sigma035/shortlist_sensitivity_sigma035.csv
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/endpoint_ambiguity_scatter_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/policy_path_lines_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/target_future_tradeoff_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/warning_correlation_sigma035.pdf
 ```
 
 ## Positioning Guardrails

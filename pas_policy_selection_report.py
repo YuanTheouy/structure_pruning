@@ -33,8 +33,10 @@ DEFAULT_POOLS = [
     {
         "pool_id": "opt27b_seed2025",
         "model": "opt-2.7b",
+        "dataset": "wikitext2",
         "seed": "2025",
         "sigma": 0.30,
+        "delta": 0.05,
         "heldout_sigma": 0.40,
         "pas_dir": "/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas",
         "recheck_dir": "/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_selected_recheck64",
@@ -43,8 +45,10 @@ DEFAULT_POOLS = [
     {
         "pool_id": "opt27b_seed3025",
         "model": "opt-2.7b",
+        "dataset": "wikitext2",
         "seed": "3025",
         "sigma": 0.30,
+        "delta": 0.05,
         "heldout_sigma": 0.40,
         "pas_dir": "/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025",
         "recheck_dir": "/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025_selected_recheck64",
@@ -53,8 +57,10 @@ DEFAULT_POOLS = [
     {
         "pool_id": "opt13b_seed2025",
         "model": "opt-1.3b",
+        "dataset": "wikitext2",
         "seed": "2025",
         "sigma": 0.30,
+        "delta": 0.05,
         "heldout_sigma": 0.40,
         "pas_dir": "/workspace/ckpts/opt-1.3b/sparsity_0.30/p0_pas_seed2025",
         "recheck_dir": "",
@@ -70,6 +76,11 @@ def parse_args():
         "--pool_config",
         default=None,
         help="Optional JSON file with a list of pool configs. Defaults to known P0 artifacts.",
+    )
+    parser.add_argument(
+        "--artifact_suffix",
+        default="",
+        help="Optional suffix for report/figure filenames, e.g. _sigma035.",
     )
     parser.add_argument("--top_m", default="2,3,5")
     parser.add_argument("--epsilon_logloss", default="0.02,0.05,0.10")
@@ -151,6 +162,43 @@ def row_for_rule(rows, rule):
     return {}
 
 
+def dataset_name(pool):
+    return pool.get("dataset") or "wikitext2"
+
+
+def probe_budgets(pool):
+    sigma = float(pool["sigma"])
+    delta = float(pool.get("delta", 0.05))
+    return [round(sigma - delta, 10), round(sigma, 10), round(sigma + delta, 10)]
+
+
+def probe_budgets_text(pool):
+    return "/".join(f"{value:.2f}" for value in probe_budgets(pool))
+
+
+def candidate_pool_path(pool, data):
+    manifest = data.get("pas_manifest") or {}
+    return pool.get("candidate_pool") or manifest.get("candidate_dir") or str(Path(pool["pas_dir"]) / "candidate_pool_unknown")
+
+
+def uses_heldout_for_selection(rule):
+    if rule == "Oracle-heldout":
+        return "yes_oracle_analysis_only"
+    return "no"
+
+
+def protocol_note(target_source, heldout_source):
+    if target_source == "final_compile_eval" and heldout_source == "selected_recheck_64":
+        return "matched_no_recovery_compile_eval"
+    if target_source == "probe_ell_sigma" and heldout_source == "heldout_results":
+        return "pipeline_probe_and_analysis_eval; not compensation-aligned final eval"
+    if target_source == "probe_ell_sigma" and heldout_source == "selected_recheck_64":
+        return "protocol_mismatch_target_probe_vs_selected_recheck; use P3 matched eval before final claim"
+    if "missing" in {target_source, heldout_source}:
+        return "missing_source_values"
+    return f"target={target_source}; heldout={heldout_source}"
+
+
 def selected_rules_by_candidate(recheck_rows):
     mapping = {}
     for row in recheck_rows:
@@ -205,10 +253,12 @@ def heldout_values(candidate_id, data):
 
 def build_tradeoff_rows(pool, data):
     rows = []
+    candidate_pool = candidate_pool_path(pool, data)
+    budgets = probe_budgets_text(pool)
     ff_row = row_for_rule(data["selection"], "FF-Endpoint")
     ff_candidate = ff_row.get("candidate_id")
-    ff_target_ell, _, ff_target_source = target_values(ff_candidate, data)
-    ff_heldout_ell, _, _, ff_heldout_source = heldout_values(ff_candidate, data)
+    ff_target_ell, _, _ = target_values(ff_candidate, data)
+    ff_heldout_ell, _, _, _ = heldout_values(ff_candidate, data)
 
     for rule in RULES:
         selection = row_for_rule(data["selection"], rule)
@@ -221,26 +271,31 @@ def build_tradeoff_rows(pool, data):
         if recheck_regret is None:
             recheck_regret = as_float(selection, "regret")
 
-        delta_target = target_ell - ff_target_ell if target_ell is not None and ff_target_ell is not None else ""
-        delta_heldout = heldout_ell - ff_heldout_ell if heldout_ell is not None and ff_heldout_ell is not None else ""
+        target_cost = target_ell - ff_target_ell if target_ell is not None and ff_target_ell is not None else ""
+        heldout_gain = ff_heldout_ell - heldout_ell if heldout_ell is not None and ff_heldout_ell is not None else ""
         rows.append(
             {
                 "model": pool["model"],
+                "dataset": dataset_name(pool),
                 "seed": pool["seed"],
-                "sigma": pool["sigma"],
+                "candidate_pool": candidate_pool,
+                "target_sigma": pool["sigma"],
+                "probe_budgets": budgets,
                 "heldout_sigma": pool["heldout_sigma"],
                 "rule": rule,
                 "selected_candidate": candidate_id or "",
+                "selection_inputs_used": SELECTION_INPUTS.get(rule, ""),
+                "uses_heldout_for_selection": uses_heldout_for_selection(rule),
                 "target_ell": target_ell if target_ell is not None else "",
                 "target_ppl": target_ppl if target_ppl is not None else "",
-                "target_regret": delta_target,
                 "heldout_ell": heldout_ell if heldout_ell is not None else "",
                 "heldout_ppl": heldout_ppl if heldout_ppl is not None else "",
+                "target_cost_vs_ff": target_cost,
+                "heldout_gain_vs_ff": heldout_gain,
                 "heldout_regret": recheck_regret if recheck_regret is not None else "",
-                "delta_target_ell_vs_endpoint": delta_target,
-                "delta_heldout_ell_vs_endpoint": delta_heldout,
-                "selection_inputs_used": SELECTION_INPUTS.get(rule, ""),
-                "artifact_source": f"{pool['pas_dir']}; target={target_source}; heldout={heldout_source}",
+                "artifact_source_target": target_source,
+                "artifact_source_heldout": heldout_source,
+                "notes": protocol_note(target_source, heldout_source),
             }
         )
 
@@ -249,21 +304,26 @@ def build_tradeoff_rows(pool, data):
         rows.append(
             {
                 "model": pool["model"],
+                "dataset": dataset_name(pool),
                 "seed": pool["seed"],
-                "sigma": pool["sigma"],
+                "candidate_pool": candidate_pool,
+                "target_sigma": pool["sigma"],
+                "probe_budgets": budgets,
                 "heldout_sigma": pool["heldout_sigma"],
                 "rule": "Random-shortlist",
                 "selected_candidate": "random_from_shortlist_distribution",
+                "selection_inputs_used": SELECTION_INPUTS["Random-shortlist"],
+                "uses_heldout_for_selection": "no",
                 "target_ell": "",
                 "target_ppl": "",
-                "target_regret": "",
                 "heldout_ell": "",
                 "heldout_ppl": "",
+                "target_cost_vs_ff": "",
+                "heldout_gain_vs_ff": "",
                 "heldout_regret": random_row.get("regret_mean", ""),
-                "delta_target_ell_vs_endpoint": "",
-                "delta_heldout_ell_vs_endpoint": "",
-                "selection_inputs_used": SELECTION_INPUTS["Random-shortlist"],
-                "artifact_source": str(Path(pool["pas_dir"]) / "selection_regret.csv"),
+                "artifact_source_target": "distribution_only_no_single_target_eval",
+                "artifact_source_heldout": str(Path(pool["pas_dir"]) / "selection_regret.csv"),
+                "notes": "random_shortlist_reports_distribution_mean_not_single_selected_candidate",
             }
         )
     return rows
@@ -291,6 +351,7 @@ def build_sensitivity_rows(pool, data, top_m_values, epsilon_values):
     if not probe_rows or not heldout_by_id:
         return rows
 
+    candidate_pool = candidate_pool_path(pool, data)
     ff = choose_min(probe_rows, "ell_0")
     ff_candidate = ff.get("candidate_id")
     ff_target = as_float(ff, "ell_0")
@@ -317,21 +378,34 @@ def build_sensitivity_rows(pool, data, top_m_values, epsilon_values):
             heldout_ell = as_float(heldout_by_id.get(candidate_id, {}), "ell_h")
             target_regret = target_ell - ff_target if target_ell is not None and ff_target is not None else ""
             heldout_regret = heldout_ell - oracle_heldout if heldout_ell is not None and oracle_heldout is not None else ""
+            target_ppl = as_float(data["probe_by_id"].get(candidate_id, {}), "ppl_0", as_float(data["probe_by_id"].get(candidate_id, {}), "ppl_zero"))
+            heldout_ppl = as_float(heldout_by_id.get(candidate_id, {}), "ppl_h")
             rows.append(
                 {
                     "model": pool["model"],
+                    "dataset": dataset_name(pool),
                     "seed": pool["seed"],
+                    "candidate_pool": candidate_pool,
+                    "target_sigma": pool["sigma"],
+                    "heldout_sigma": pool["heldout_sigma"],
                     "shortlist_type": shortlist_type,
                     "shortlist_value": value,
                     "shortlist_size": len(shortlist),
                     "rule": rule,
                     "selected_candidate": candidate_id or "",
                     "target_ell": target_ell if target_ell is not None else "",
+                    "target_ppl": target_ppl if target_ppl is not None else "",
                     "heldout_ell": heldout_ell if heldout_ell is not None else "",
+                    "heldout_ppl": heldout_ppl if heldout_ppl is not None else "",
+                    "target_cost_vs_ff": target_regret,
+                    "heldout_gain_vs_ff": ff_heldout - heldout_ell if ff_heldout is not None and heldout_ell is not None else "",
                     "target_regret": target_regret,
                     "heldout_regret": heldout_regret,
-                    "endpoint_cost_vs_FF": target_regret,
-                    "heldout_gain_vs_FF": ff_heldout - heldout_ell if ff_heldout is not None and heldout_ell is not None else "",
+                    "notes": (
+                        "predeclared_endpoint_compatible_shortlist; heldout_analysis_only"
+                        if rule != "Oracle-heldout"
+                        else "oracle_analysis_baseline_uses_heldout"
+                    ),
                 }
             )
     return rows
@@ -346,7 +420,7 @@ def selected_candidate_ids(data):
     return ids
 
 
-def plot_pool_figures(pool, data, output_dir):
+def plot_pool_figures(pool, data, output_dir, artifact_suffix=""):
     pool_dir = output_dir / pool["pool_id"]
     pool_dir.mkdir(parents=True, exist_ok=True)
     probe_rows = data["probe"]
@@ -370,7 +444,7 @@ def plot_pool_figures(pool, data, output_dir):
         ys.append(y)
         labels.append(candidate_id)
 
-    fig_path = pool_dir / "endpoint_ambiguity_scatter.pdf"
+    fig_path = pool_dir / f"endpoint_ambiguity_scatter{artifact_suffix}.pdf"
     plt.figure(figsize=(5.8, 4.2))
     plt.scatter(xs, ys, alpha=0.65, label="candidate")
     for rule, candidate_id in selected_ids.items():
@@ -388,7 +462,7 @@ def plot_pool_figures(pool, data, output_dir):
     plt.close()
     artifacts.append(str(fig_path))
 
-    fig_path = pool_dir / "policy_path_lines.pdf"
+    fig_path = pool_dir / f"policy_path_lines{artifact_suffix}.pdf"
     plt.figure(figsize=(6.2, 4.0))
     xlabels = ["sigma-delta", "sigma", "sigma+delta", "heldout"]
     for rule, candidate_id in selected_ids.items():
@@ -412,7 +486,7 @@ def plot_pool_figures(pool, data, output_dir):
     plt.close()
     artifacts.append(str(fig_path))
 
-    fig_path = pool_dir / "target_future_tradeoff.pdf"
+    fig_path = pool_dir / f"target_future_tradeoff{artifact_suffix}.pdf"
     ff_row = row_for_rule(data["selection"], "FF-Endpoint")
     ff_candidate = ff_row.get("candidate_id")
     ff_target = as_float(data["probe_by_id"].get(ff_candidate, {}), "ell_0")
@@ -437,6 +511,36 @@ def plot_pool_figures(pool, data, output_dir):
     plt.savefig(fig_path)
     plt.close()
     artifacts.append(str(fig_path))
+
+    fig_path = pool_dir / f"warning_correlation{artifact_suffix}.pdf"
+    metrics = [
+        ("ell_plus", "ell(sigma+delta)"),
+        ("slope", "PAS-Slope"),
+        ("curvature", "PAS-Curv"),
+    ]
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 3.4), sharey=True)
+    for axis, (metric, label) in zip(axes, metrics):
+        mxs = []
+        dys = []
+        for row in probe_rows:
+            candidate_id = row.get("candidate_id")
+            heldout = heldout_by_id.get(candidate_id, {})
+            ell_0 = as_float(row, "ell_0")
+            ell_h = as_float(heldout, "ell_h")
+            value = as_float(row, metric)
+            if None in (ell_0, ell_h, value):
+                continue
+            mxs.append(value)
+            dys.append(ell_h - ell_0)
+        axis.scatter(mxs, dys, alpha=0.7)
+        axis.set_xlabel(label)
+        axis.grid(alpha=0.25)
+    axes[0].set_ylabel("ell(heldout) - ell(sigma)")
+    fig.suptitle(f"Local warnings vs held-out degradation: {pool['model']} seed {pool['seed']}")
+    fig.tight_layout()
+    fig.savefig(fig_path)
+    plt.close(fig)
+    artifacts.append(str(fig_path))
     return artifacts
 
 
@@ -448,6 +552,9 @@ def main():
         pools = read_json(args.pool_config)
     else:
         pools = DEFAULT_POOLS
+    artifact_suffix = args.artifact_suffix
+    if artifact_suffix and not artifact_suffix.startswith("_"):
+        artifact_suffix = "_" + artifact_suffix
     top_m_values = [int(value) for value in args.top_m.split(",") if value.strip()]
     epsilon_values = [float(value) for value in args.epsilon_logloss.split(",") if value.strip()]
 
@@ -462,13 +569,21 @@ def main():
             continue
         tradeoff_rows.extend(build_tradeoff_rows(pool, data))
         sensitivity_rows.extend(build_sensitivity_rows(pool, data, top_m_values, epsilon_values))
-        figure_artifacts.extend(plot_pool_figures(pool, data, output_dir / "figures"))
-        manifest_pools.append({"pool_id": pool["pool_id"], "status": "processed", "pas_dir": pool["pas_dir"]})
+        figure_artifacts.extend(plot_pool_figures(pool, data, output_dir / "figures", artifact_suffix=artifact_suffix))
+        manifest_pools.append(
+            {
+                "pool_id": pool["pool_id"],
+                "status": "processed",
+                "pas_dir": pool["pas_dir"],
+                "candidate_pool": candidate_pool_path(pool, data),
+                "candidate_count": len(data["probe"]),
+            }
+        )
 
-    tradeoff_csv = output_dir / "policy_selection_tradeoff.csv"
-    tradeoff_md = output_dir / "policy_selection_tradeoff.md"
-    sensitivity_csv = output_dir / "shortlist_sensitivity.csv"
-    sensitivity_md = output_dir / "shortlist_sensitivity.md"
+    tradeoff_csv = output_dir / f"policy_selection_tradeoff{artifact_suffix}.csv"
+    tradeoff_md = output_dir / f"policy_selection_tradeoff{artifact_suffix}.md"
+    sensitivity_csv = output_dir / f"shortlist_sensitivity{artifact_suffix}.csv"
+    sensitivity_md = output_dir / f"shortlist_sensitivity{artifact_suffix}.md"
     manifest_path = output_dir / "policy_selection_manifest.json"
     write_csv(tradeoff_csv, tradeoff_rows)
     write_markdown_table(tradeoff_md, tradeoff_rows)
@@ -481,7 +596,10 @@ def main():
             "pools": manifest_pools,
             "top_m": top_m_values,
             "epsilon_logloss": epsilon_values,
+            "artifact_suffix": artifact_suffix,
             "heldout_usage": "analysis_only_not_selection_tuning_filtering_or_early_stopping",
+            "primary_rule": "PAS-Slope",
+            "ablation_rule": "PAS-Curv",
             "artifacts": {
                 "policy_selection_tradeoff_csv": str(tradeoff_csv),
                 "policy_selection_tradeoff_md": str(tradeoff_md),

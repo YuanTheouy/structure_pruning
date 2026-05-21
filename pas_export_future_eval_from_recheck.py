@@ -115,7 +115,13 @@ def main():
 
     csv_path = output_dir / "pas_compensation_aligned_eval_40.csv"
     manifest_path = output_dir / "pas_compensation_aligned_manifest_40.json"
+    commands_path = output_dir / "pas_compensation_aligned_commands_40.sh"
     write_csv(csv_path, rows)
+    with commands_path.open("w", encoding="utf-8") as handle:
+        handle.write("#!/usr/bin/env bash\n")
+        handle.write("# Materialize matched 40% no-recovery evaluation artifacts from selected-candidate recheck.\n")
+        handle.write(" ".join(shlex.quote(part) for part in sys.argv))
+        handle.write("\n")
     write_json(
         manifest_path,
         {
@@ -142,11 +148,13 @@ def main():
             "artifacts": {
                 "pas_compensation_aligned_eval_40": str(csv_path),
                 "pas_compensation_aligned_manifest_40": str(manifest_path),
+                "pas_compensation_aligned_commands_40": str(commands_path),
             },
         },
     )
     print(f"Wrote {csv_path}")
     print(f"Wrote {manifest_path}")
+    print(f"Wrote {commands_path}")
 
 
 if __name__ == "__main__":
