@@ -788,6 +788,137 @@ Server-reset P3 result recorded on 2026-05-21:
 
 Protocol match for the stress budget: yes. The materialized manifest states the selected-candidate recheck used `amc_searchPPO.py --job=compile`, `final_sparsity=0.40`, no reconstruction, same model/dataset, same sample count, and the same selected priority-vector candidates.
 
+### Stress-Recovery Evidence Gate
+
+Current priority, from `docs/PAS_STRESS_RECOVERY_EVIDENCE_2026_05_21.md`: do not start periodic PAS / RPVS yet. First prove that local stress matters.
+
+The required question is no longer "does PAS win one endpoint?". The required question is:
+
+```text
+Given the same FastForward candidate pool, does S35 = L35 - L30 predict
+cross-budget fragility and same-protocol recovery quality after controlling
+for endpoint loss L30?
+```
+
+P0 server command sequence, lightweight because it uses existing `p0_pas_seed3025` artifacts:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python scripts/pas_export_candidate_stress_table.py \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --probe-results /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/probe_results.csv \
+  --heldout-results /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/heldout_results.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+
+python scripts/pas_analyze_stress_correlations.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --stress-tables /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
+Expected P0 artifacts:
+
+```text
+/workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv
+/workspace/ckpts/pas_stress_recovery/candidate_stress_manifest_opt27b.json
+/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv
+/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.md
+/workspace/ckpts/pas_stress_recovery/stress_correlation_manifest_opt27b.json
+```
+
+P0 pass condition: `S35` should positively predict `Regret40` or `Delta40`, and the partial correlation/regression coefficient for `S35` should remain meaningful after controlling for `L30`. If P0 fails, stop and do not write a recovery/PAS stability claim.
+
+P1 server command sequence, longer because it recompiles and recovers a fixed subset under one identical protocol:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python scripts/pas_build_recovery_subset.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --stress-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --selected-candidates-json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+
+bash scripts/pas_run_recovery_batch.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --num-samples 64 \
+  --batch-size 8 \
+  --recon-sample 16
+
+python scripts/pas_collect_recovery_results.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
+  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
+Expected P1 artifacts:
+
+```text
+/workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv
+/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands.sh
+/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv
+/workspace/ckpts/pas_stress_recovery/recovery_analysis_opt27b_seed3025.csv
+/workspace/ckpts/pas_stress_recovery/recovery_manifest_opt27b.json
+```
+
+P1 pass condition: every candidate in the fixed subset must use the same recovery protocol. `S35` should predict recovered `L30` or `RecoveryGain`. If P1 fails, do not claim PAS improves recovery.
+
+Optional figures after P0/P1:
+
+```bash
+python scripts/pas_make_stress_recovery_figures.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --stress-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
 ### P4 One More Setting
 
 If server time allows, run the next setting: `OPT-2.7B`, `sigma=0.35`, probe `0.30/0.35/0.40`, held-out `0.45`.

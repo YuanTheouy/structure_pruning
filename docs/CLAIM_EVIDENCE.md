@@ -1,14 +1,14 @@
-# FastForward Early-Warning Claim-Evidence Checklist
+# FastForward PAS-Slope Claim-Evidence Checklist
 
 | Claim | Evidence Needed | Current Asset | Gap | Next Action |
 | --- | --- | --- | --- | --- |
 | Endpoint-similar pruning candidates can have divergent future compression paths. | Candidate path CSV across sparsities, plus `path_divergence.pdf`. | Two P0 pools now have `path_divergence.pdf`: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas/path_divergence.pdf` and `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/path_divergence.pdf`. | Need figure inspection before manuscript use. | Inspect figures and keep the claim scoped to same-pool P0 evidence. |
-| Local path-warning slope predicts future degradation. | Pearson/Spearman between slope from `0.25/0.30/0.35` and separated future target `logPPL(0.40)-logPPL(0.30)`. | Two P0 pools show slope Spearman `0.8030075187969924` and `0.8285714285714285`. | Evidence is still OPT-2.7B/WikiText-2 P0 only. | Use slope as the primary PAS warning score for the current paper table staging. |
+| Local budget sensitivity predicts future degradation. | Pearson/Spearman between PAS-Slope from `0.30/0.35` and separated future target `logPPL(0.40)-logPPL(0.30)`. | Two P0 pools show slope Spearman `0.8030075187969924` and `0.8285714285714285`. | Evidence is still OPT-2.7B/WikiText-2 P0 only. | Use PAS-Slope as the primary PAS score for the current paper table staging. |
 | Curvature is a useful but not primary warning score. | Pearson/Spearman for curvature from `0.25/0.30/0.35` against separated future target. | Two P0 pools show curvature Spearman `0.5969924812030075` and `0.41052631578947363`; PAS-Curv succeeds in the first pool but fails in seed `3025`. | Curvature is weaker and mixed relative to slope. | Keep PAS-Curv as an ablation, not the headline selection rule. |
-| Path-warning selection improves high-sparsity stability over endpoint-only selection. | Same-pool selection regret table: FF-Endpoint, PAS-Plus, PAS-Slope, PAS-Curv, Oracle-heldout. | Two P0 pools show PAS-Slope regret `0.0` in both; FF-Endpoint regret is `0.27734373462907325` and `0.5581475044600985`. | Need broader model/dataset evidence before broad claims. | Fill P0 table staging, but phrase final paper claims as P0 evidence unless expanded. |
-| Gains come from the early-warning criterion, not merely extra probe evaluations. | Ablation table: endpoint, plus-probe, slope, curvature, oracle. | Two P0 pools have comparable `selection_regret.csv` artifacts under `p0_pas` and `p0_pas_seed3025`. | Need final table formatting and optional selected-candidate high-sample recheck for seed `3025`. | Use PAS-Plus as the probe-only control and PAS-Slope as the warning selection. |
-| Early-warning adds selection-stage cost but no inference-time overhead. | Runtime summary with search GPU-hours, probe cost, calibration cost, and final checkpoint type. | Smoke probe row records `eval_seconds_total=144.03351759910583` for best candidate; scripts record per-shard logs under `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/shards/`. | Need full run-level overhead summary and final checkpoint metadata. | Run `summarize_overhead.py` after larger candidate probe/evaluation. |
-| The narrowed contribution is novel enough under 2026 related work. | Independent novelty matrix and reviewer-risk review with 2025-2026 pruning/phase-transition work. | `docs/NOVELTY_REVIEW.md` completed on 2026-05-19. | Need to ensure final manuscript follows the narrowed wording and cites GISP, GRASPrune, Olica, Týr-the-Pruner, and phase-transition work correctly. | Keep contribution wording as candidate-selection/early-warning diagnostic; do not broaden to generic structured pruning. |
+| PAS-Slope selection improves held-out stricter-budget stability over endpoint-only selection in tested pools. | Same-pool selection regret table: FF-Endpoint, PAS-Plus, PAS-Slope, PAS-Curv, Oracle-heldout. | Two P0 pools show PAS-Slope regret `0.0` in both; FF-Endpoint regret is `0.27734373462907325` and `0.5581475044600985`. | Need broader model/dataset evidence before broad claims. | Fill P0 table staging, but phrase final paper claims as P0 evidence unless expanded. |
+| Gains come from local budget sensitivity, not merely extra probe evaluations. | Ablation table: endpoint, plus-probe, slope, curvature, oracle. | Two P0 pools have comparable `selection_regret.csv` artifacts under `p0_pas` and `p0_pas_seed3025`. | Need final table formatting and optional selected-candidate high-sample recheck for seed `3025`. | Use PAS-Plus as the probe-only control and PAS-Slope as the primary selection score. |
+| PAS adds selection-stage cost but no inference-time overhead. | Runtime summary with search GPU-hours, probe cost, calibration cost, and final checkpoint type. | Smoke probe row records `eval_seconds_total=144.03351759910583` for best candidate; scripts record per-shard logs under `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_ew/shards/`. | Need full run-level overhead summary and final checkpoint metadata. | Run `summarize_overhead.py` after larger candidate probe/evaluation. |
+| The narrowed contribution is novel enough under 2026 related work. | Independent novelty matrix and reviewer-risk review with 2025-2026 pruning/phase-transition work. | `docs/NOVELTY_REVIEW.md` completed on 2026-05-19. | Need to ensure final manuscript follows the narrowed wording and cites GISP, GRASPrune, Olica, Týr-the-Pruner, and phase-transition work correctly. | Keep contribution wording as same-vector local-budget-sensitivity candidate selection; do not broaden to generic structured pruning. |
 
 ## Evidence Discipline
 
@@ -278,6 +278,111 @@ Completed `0.40` matched eval materialization, recorded 2026-05-21:
 | --- | --- | --- | --- | --- | --- | --- |
 | `FF-Endpoint` | `p0_candidates_seed3025_gpu6_opt-2.7b_seed3031_step000037_ep000037` | `5.594643081425589` | `268.98162841796875` | `0.39979534733172495` | `0.6400670596401818` | `122.88303422927856` |
 | `PAS-Slope` | `p0_candidates_seed3025_gpu5_opt-2.7b_seed3030_step000048_ep000048` | `4.954576021785408` | `141.8224639892578` | `0.3999388122211047` | `0.0` | `125.75517463684082` |
+
+## PAS Stress-Recovery Evidence Gate
+
+Status: scripts and runbook prepared on 2026-05-21. This gate supersedes
+starting periodic PAS/RPVS.
+
+| Claim | Status | Required artifact |
+| --- | --- | --- |
+| Claim 1: `S35` predicts cross-budget regret | pending | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
+| Claim 2: `S35` predicts recovery quality | pending | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
+| Claim 3: `S35` predicts downstream retention | pending | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
+
+P0 command sequence:
+
+```bash
+cd /workspace/structure_pruning
+git fetch origin
+git pull --ff-only origin main
+
+python scripts/pas_export_candidate_stress_table.py \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --probe-results /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/probe_results.csv \
+  --heldout-results /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/heldout_results.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+
+python scripts/pas_analyze_stress_correlations.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --stress-tables /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
+P0 expected artifacts:
+
+- `/workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/candidate_stress_manifest_opt27b.json`
+- `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv`
+- `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.md`
+- `/workspace/ckpts/pas_stress_recovery/stress_correlation_manifest_opt27b.json`
+
+P1 command sequence:
+
+```bash
+python scripts/pas_build_recovery_subset.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --stress-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --selected-candidates-json /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_pas_seed3025/selected_candidates.json \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+
+bash scripts/pas_run_recovery_batch.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --batch-size 8 \
+  --num-samples 64 \
+  --recon-sample 16
+
+python scripts/pas_collect_recovery_results.py \
+  --model /workspace/Models/opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --target-sigma 0.30 \
+  --probe-sigma 0.35 \
+  --heldout-sigma 0.40 \
+  --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
+  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --output-dir /workspace/ckpts/pas_stress_recovery
+```
+
+P1 expected artifacts:
+
+- `/workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands.sh`
+- `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/recovery_analysis_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/recovery_manifest_opt27b.json`
+
+Interpretation guardrail: if P0 or P1 fails, do not claim PAS improves
+recovery and do not start RPVS as a rescue experiment.
 
 P4 one-more-setting command slot:
 
