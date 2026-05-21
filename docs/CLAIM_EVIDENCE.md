@@ -209,8 +209,10 @@ P0 consolidated policy-selection table:
 - Expected artifacts:
   - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.csv`
   - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.md`
+  - `/workspace/ckpts/pas_policy_selection_20260521/price_of_budget_robustness_seed3025.csv`
   - `/workspace/ckpts/pas_policy_selection_20260521/policy_selection_manifest.json`
 - Required interpretation:
+  - metrics use polished-draft names: `PoBR_sigma`, `StressGain_h`, and `Regret_h`.
   - target-budget and stricter-budget values may come from different artifact protocols; `artifact_source_target`, `artifact_source_heldout`, and `notes` record this explicitly.
   - seed `3025` includes final no-reconstruction target eval and selected-candidate `0.40` recheck values.
   - `uses_heldout_for_selection` must be `no` for FF/PAS rows; `Oracle-heldout` is analysis-only.
@@ -231,6 +233,10 @@ P2 policy-selection figures:
 - Same command as P0, because the report script also writes per-pool figures under:
   - `/workspace/ckpts/pas_policy_selection_20260521/figures/`
 - Expected figure names per pool:
+  - `robustness_frontier.pdf`
+  - `path_divergence.pdf`
+  - `sensitivity_correlation.pdf`
+- Auxiliary/debug figure aliases are also kept:
   - `endpoint_ambiguity_scatter.pdf`
   - `policy_path_lines.pdf`
   - `target_future_tradeoff.pdf`
@@ -256,10 +262,9 @@ P4 one-more-setting command slot:
   - `/workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/warning_correlation.csv`
   - `/workspace/ckpts/pas_policy_selection_sigma035/policy_selection_tradeoff_sigma035.csv`
   - `/workspace/ckpts/pas_policy_selection_sigma035/shortlist_sensitivity_sigma035.csv`
-  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/endpoint_ambiguity_scatter_sigma035.pdf`
-  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/policy_path_lines_sigma035.pdf`
-  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/target_future_tradeoff_sigma035.pdf`
-  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/warning_correlation_sigma035.pdf`
+  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/robustness_frontier_sigma035.pdf`
+  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/path_divergence_sigma035.pdf`
+  - `/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/sensitivity_correlation_sigma035.pdf`
 
 ## Compensation-Aligned Final Evaluation Evidence
 

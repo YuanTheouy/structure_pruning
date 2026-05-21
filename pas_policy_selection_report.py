@@ -141,6 +141,12 @@ def write_markdown_table(path, rows):
             handle.write("| " + " | ".join(values) + " |\n")
 
 
+def save_current_figure(paths):
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(path)
+
+
 def as_float(row, key, default=None):
     value = row.get(key)
     if value in ("", None):
@@ -290,9 +296,9 @@ def build_tradeoff_rows(pool, data):
                 "target_ppl": target_ppl if target_ppl is not None else "",
                 "heldout_ell": heldout_ell if heldout_ell is not None else "",
                 "heldout_ppl": heldout_ppl if heldout_ppl is not None else "",
-                "target_cost_vs_ff": target_cost,
-                "heldout_gain_vs_ff": heldout_gain,
-                "heldout_regret": recheck_regret if recheck_regret is not None else "",
+                "PoBR_sigma": target_cost,
+                "StressGain_h": heldout_gain,
+                "Regret_h": recheck_regret if recheck_regret is not None else "",
                 "artifact_source_target": target_source,
                 "artifact_source_heldout": heldout_source,
                 "notes": protocol_note(target_source, heldout_source),
@@ -318,9 +324,9 @@ def build_tradeoff_rows(pool, data):
                 "target_ppl": "",
                 "heldout_ell": "",
                 "heldout_ppl": "",
-                "target_cost_vs_ff": "",
-                "heldout_gain_vs_ff": "",
-                "heldout_regret": random_row.get("regret_mean", ""),
+                "PoBR_sigma": "",
+                "StressGain_h": "",
+                "Regret_h": random_row.get("regret_mean", ""),
                 "artifact_source_target": "distribution_only_no_single_target_eval",
                 "artifact_source_heldout": str(Path(pool["pas_dir"]) / "selection_regret.csv"),
                 "notes": "random_shortlist_reports_distribution_mean_not_single_selected_candidate",
@@ -397,10 +403,9 @@ def build_sensitivity_rows(pool, data, top_m_values, epsilon_values):
                     "target_ppl": target_ppl if target_ppl is not None else "",
                     "heldout_ell": heldout_ell if heldout_ell is not None else "",
                     "heldout_ppl": heldout_ppl if heldout_ppl is not None else "",
-                    "target_cost_vs_ff": target_regret,
-                    "heldout_gain_vs_ff": ff_heldout - heldout_ell if ff_heldout is not None and heldout_ell is not None else "",
-                    "target_regret": target_regret,
-                    "heldout_regret": heldout_regret,
+                    "PoBR_sigma": target_regret,
+                    "StressGain_h": ff_heldout - heldout_ell if ff_heldout is not None and heldout_ell is not None else "",
+                    "Regret_h": heldout_regret,
                     "notes": (
                         "predeclared_endpoint_compatible_shortlist; heldout_analysis_only"
                         if rule != "Oracle-heldout"
@@ -462,7 +467,8 @@ def plot_pool_figures(pool, data, output_dir, artifact_suffix=""):
     plt.close()
     artifacts.append(str(fig_path))
 
-    fig_path = pool_dir / f"policy_path_lines{artifact_suffix}.pdf"
+    paper_path = pool_dir / f"path_divergence{artifact_suffix}.pdf"
+    aux_path = pool_dir / f"policy_path_lines{artifact_suffix}.pdf"
     plt.figure(figsize=(6.2, 4.0))
     xlabels = ["sigma-delta", "sigma", "sigma+delta", "heldout"]
     for rule, candidate_id in selected_ids.items():
@@ -482,37 +488,56 @@ def plot_pool_figures(pool, data, output_dir, artifact_suffix=""):
     plt.grid(alpha=0.25)
     plt.legend(fontsize=8)
     plt.tight_layout()
-    plt.savefig(fig_path)
+    save_current_figure([paper_path, aux_path])
     plt.close()
-    artifacts.append(str(fig_path))
+    artifacts.extend([str(paper_path), str(aux_path)])
 
-    fig_path = pool_dir / f"target_future_tradeoff{artifact_suffix}.pdf"
+    paper_path = pool_dir / f"robustness_frontier{artifact_suffix}.pdf"
+    aux_path = pool_dir / f"target_future_tradeoff{artifact_suffix}.pdf"
     ff_row = row_for_rule(data["selection"], "FF-Endpoint")
     ff_candidate = ff_row.get("candidate_id")
     ff_target = as_float(data["probe_by_id"].get(ff_candidate, {}), "ell_0")
     ff_heldout = as_float(heldout_by_id.get(ff_candidate, {}), "ell_h")
+    oracle = choose_min(data["heldout"], "ell_h")
+    oracle_heldout = as_float(oracle, "ell_h")
     plt.figure(figsize=(5.6, 4.0))
+    all_xs = []
+    all_ys = []
+    if None not in (ff_target, oracle_heldout):
+        for probe_row in probe_rows:
+            candidate_id = probe_row.get("candidate_id")
+            heldout = heldout_by_id.get(candidate_id, {})
+            target = as_float(probe_row, "ell_0")
+            future = as_float(heldout, "ell_h")
+            if target is None or future is None:
+                continue
+            all_xs.append(target - ff_target)
+            all_ys.append(future - oracle_heldout)
+        plt.scatter(all_xs, all_ys, color="0.72", alpha=0.55, label="candidate")
     for rule in ["FF-Endpoint", "PAS-Plus", "PAS-Slope", "PAS-Curv", "Oracle-heldout"]:
         row = row_for_rule(data["selection"], rule)
         candidate_id = row.get("candidate_id")
         target = as_float(data["probe_by_id"].get(candidate_id, {}), "ell_0")
         heldout = as_float(heldout_by_id.get(candidate_id, {}), "ell_h")
-        if None in (target, heldout, ff_target, ff_heldout):
+        if None in (target, heldout, ff_target, oracle_heldout):
             continue
-        plt.scatter([target - ff_target], [ff_heldout - heldout], s=70)
-        plt.annotate(rule, (target - ff_target, ff_heldout - heldout), xytext=(4, 4), textcoords="offset points", fontsize=8)
+        plt.scatter([target - ff_target], [heldout - oracle_heldout], s=70)
+        plt.annotate(rule, (target - ff_target, heldout - oracle_heldout), xytext=(4, 4), textcoords="offset points", fontsize=8)
     plt.axhline(0.0, color="black", linewidth=0.8)
     plt.axvline(0.0, color="black", linewidth=0.8)
-    plt.xlabel("endpoint cost vs FF")
-    plt.ylabel("held-out gain vs FF")
-    plt.title(f"Target/future tradeoff: {pool['model']} seed {pool['seed']}")
+    plt.xlabel("PoBR_sigma")
+    plt.ylabel("Regret_h")
+    plt.title(f"Robustness frontier: {pool['model']} seed {pool['seed']}")
     plt.grid(alpha=0.25)
+    if all_xs:
+        plt.legend(fontsize=8)
     plt.tight_layout()
-    plt.savefig(fig_path)
+    save_current_figure([paper_path, aux_path])
     plt.close()
-    artifacts.append(str(fig_path))
+    artifacts.extend([str(paper_path), str(aux_path)])
 
-    fig_path = pool_dir / f"warning_correlation{artifact_suffix}.pdf"
+    paper_path = pool_dir / f"sensitivity_correlation{artifact_suffix}.pdf"
+    aux_path = pool_dir / f"warning_correlation{artifact_suffix}.pdf"
     metrics = [
         ("ell_plus", "ell(sigma+delta)"),
         ("slope", "PAS-Slope"),
@@ -538,9 +563,11 @@ def plot_pool_figures(pool, data, output_dir, artifact_suffix=""):
     axes[0].set_ylabel("ell(heldout) - ell(sigma)")
     fig.suptitle(f"Local warnings vs held-out degradation: {pool['model']} seed {pool['seed']}")
     fig.tight_layout()
-    fig.savefig(fig_path)
+    for path in [paper_path, aux_path]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path)
     plt.close(fig)
-    artifacts.append(str(fig_path))
+    artifacts.extend([str(paper_path), str(aux_path)])
     return artifacts
 
 
@@ -584,11 +611,19 @@ def main():
     tradeoff_md = output_dir / f"policy_selection_tradeoff{artifact_suffix}.md"
     sensitivity_csv = output_dir / f"shortlist_sensitivity{artifact_suffix}.csv"
     sensitivity_md = output_dir / f"shortlist_sensitivity{artifact_suffix}.md"
+    pobr_seed3025_csv = output_dir / f"price_of_budget_robustness_seed3025{artifact_suffix}.csv"
     manifest_path = output_dir / "policy_selection_manifest.json"
     write_csv(tradeoff_csv, tradeoff_rows)
     write_markdown_table(tradeoff_md, tradeoff_rows)
     write_csv(sensitivity_csv, sensitivity_rows)
     write_markdown_table(sensitivity_md, sensitivity_rows)
+    pobr_seed3025_rows = [
+        row
+        for row in tradeoff_rows
+        if row.get("model") == "opt-2.7b" and str(row.get("seed")) == "3025"
+    ]
+    if pobr_seed3025_rows:
+        write_csv(pobr_seed3025_csv, pobr_seed3025_rows)
     write_json(
         manifest_path,
         {
@@ -605,6 +640,7 @@ def main():
                 "policy_selection_tradeoff_md": str(tradeoff_md),
                 "shortlist_sensitivity_csv": str(sensitivity_csv),
                 "shortlist_sensitivity_md": str(sensitivity_md),
+                "price_of_budget_robustness_seed3025_csv": str(pobr_seed3025_csv) if pobr_seed3025_rows else "",
                 "figures": figure_artifacts,
             },
         },
@@ -613,6 +649,8 @@ def main():
     print(f"Wrote {tradeoff_md}")
     print(f"Wrote {sensitivity_csv}")
     print(f"Wrote {sensitivity_md}")
+    if pobr_seed3025_rows:
+        print(f"Wrote {pobr_seed3025_csv}")
     print(f"Wrote {manifest_path}")
     for artifact in figure_artifacts:
         print(f"Wrote {artifact}")

@@ -697,6 +697,7 @@ Expected P0 artifacts:
 ```text
 /workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.csv
 /workspace/ckpts/pas_policy_selection_20260521/policy_selection_tradeoff.md
+/workspace/ckpts/pas_policy_selection_20260521/price_of_budget_robustness_seed3025.csv
 /workspace/ckpts/pas_policy_selection_20260521/policy_selection_manifest.json
 ```
 
@@ -711,20 +712,20 @@ Expected P2 artifacts:
 
 ```text
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/endpoint_ambiguity_scatter.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/policy_path_lines.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/target_future_tradeoff.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/warning_correlation.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/robustness_frontier.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/path_divergence.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed2025/sensitivity_correlation.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/endpoint_ambiguity_scatter.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/policy_path_lines.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/target_future_tradeoff.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/warning_correlation.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/robustness_frontier.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/path_divergence.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt27b_seed3025/sensitivity_correlation.pdf
 /workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/endpoint_ambiguity_scatter.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/policy_path_lines.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/target_future_tradeoff.pdf
-/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/warning_correlation.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/robustness_frontier.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/path_divergence.pdf
+/workspace/ckpts/pas_policy_selection_20260521/figures/opt13b_seed2025/sensitivity_correlation.pdf
 ```
 
-The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only. The table columns include `uses_heldout_for_selection`, `artifact_source_target`, `artifact_source_heldout`, and `notes` so protocol mismatches are auditable rather than hidden.
+The script uses predeclared shortlist sensitivity settings: `top_m = 2, 3, 5` and `epsilon_logloss = 0.02, 0.05, 0.10`. The held-out stricter budget remains analysis-only. The table columns use polished-draft metric names `PoBR_sigma`, `StressGain_h`, and `Regret_h`, and also include `uses_heldout_for_selection`, `artifact_source_target`, `artifact_source_heldout`, and `notes` so protocol mismatches are auditable rather than hidden. The older auxiliary figure aliases (`policy_path_lines`, `target_future_tradeoff`, `warning_correlation`) are still emitted for debugging, but the paper-ready names are `robustness_frontier`, `path_divergence`, and `sensitivity_correlation`.
 
 ### P3 Matched Future-Budget Eval
 
@@ -831,10 +832,9 @@ Expected artifacts:
 /workspace/ckpts/opt-2.7b/sparsity_0.35/p0_pas_seed2025/warning_correlation.csv
 /workspace/ckpts/pas_policy_selection_sigma035/policy_selection_tradeoff_sigma035.csv
 /workspace/ckpts/pas_policy_selection_sigma035/shortlist_sensitivity_sigma035.csv
-/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/endpoint_ambiguity_scatter_sigma035.pdf
-/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/policy_path_lines_sigma035.pdf
-/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/target_future_tradeoff_sigma035.pdf
-/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/warning_correlation_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/robustness_frontier_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/path_divergence_sigma035.pdf
+/workspace/ckpts/pas_policy_selection_sigma035/figures/opt27b_sigma035_seed2025/sensitivity_correlation_sigma035.pdf
 ```
 
 ## Positioning Guardrails
