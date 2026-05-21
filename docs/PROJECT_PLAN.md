@@ -844,6 +844,28 @@ Expected P0 artifacts:
 
 P0 pass condition: `S35` should positively predict `Regret40` or `Delta40`, and the partial correlation/regression coefficient for `S35` should remain meaningful after controlling for `L30`. If P0 fails, stop and do not write a recovery/PAS stability claim.
 
+P0 observed result, recorded 2026-05-21:
+
+```text
+stress table: /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv
+stress correlation: /workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv
+rows: 20
+
+Pearson(S35,Regret40): 0.1625803636488299
+Spearman(S35,Regret40): 0.09473684210526315
+Pearson(S35,Delta40): 0.8337100870651009
+Spearman(S35,Delta40): 0.8285714285714285
+partial_corr(S35,Regret40|L30): 0.8107895146421564
+partial_corr(S35,L40|L30): 0.8107895146421564
+L40~L30+S35: beta_L30=0.9626057100144196, beta_S35=1.2588788204496062, R2=0.8817489807506785
+Regret40~L30+S35: beta_L30=0.962605710014419, beta_S35=1.2588788204496064, R2=0.8817489807506785
+```
+
+P0 status: passed for the intended controlled-stability claim. Raw
+`S35 -> Regret40` is weak, so do not claim stress alone ranks absolute future
+regret. The useful statement is that `S35` predicts degradation and held-out
+regret after accounting for endpoint loss `L30`.
+
 P1 server command sequence, longer because it recompiles and recovers a fixed subset under one identical protocol:
 
 ```bash

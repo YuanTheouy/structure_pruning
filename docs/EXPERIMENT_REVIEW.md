@@ -41,6 +41,25 @@ Do not start periodic PAS / RPVS until P0/P1 pass. If P0 or P1 fails, the paper
 should keep the claim at "budget-transferable priority-vector diagnostics" and
 must not claim PAS improves recovery.
 
+P0 stress table was completed on 2026-05-21 for `opt-2.7b`, seed `3025`, 20
+candidates:
+
+| Metric | Value |
+| --- | --- |
+| `Pearson(S35,Regret40)` | `0.1625803636488299` |
+| `Spearman(S35,Regret40)` | `0.09473684210526315` |
+| `Pearson(S35,Delta40)` | `0.8337100870651009` |
+| `Spearman(S35,Delta40)` | `0.8285714285714285` |
+| `partial_corr(S35,Regret40|L30)` | `0.8107895146421564` |
+| `partial_corr(S35,L40|L30)` | `0.8107895146421564` |
+| `L40~L30+S35` | `beta_S35=1.2588788204496062`, `R2=0.8817489807506785` |
+| `Regret40~L30+S35` | `beta_S35=1.2588788204496064`, `R2=0.8817489807506785` |
+
+Review interpretation: P0 passes the intended controlled-stability test. Raw
+`S35 -> Regret40` is weak, but `S35 -> Delta40` and controlled
+`S35 -> Regret40 | L30` are strong. Proceed to P1 same-protocol recovery before
+making any recovery claim.
+
 ## Reviewed Artifacts
 
 - Runbook and smoke-test summary: `docs/PROJECT_PLAN.md`

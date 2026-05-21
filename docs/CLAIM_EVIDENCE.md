@@ -286,7 +286,7 @@ starting periodic PAS/RPVS.
 
 | Claim | Status | Required artifact |
 | --- | --- | --- |
-| Claim 1: `S35` predicts cross-budget regret | pending | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
+| Claim 1: `S35` predicts cross-budget regret | P0 positive on seed `3025` after controlling `L30` | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
 | Claim 2: `S35` predicts recovery quality | pending | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
 | Claim 3: `S35` predicts downstream retention | pending | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
 
@@ -329,6 +329,23 @@ P0 expected artifacts:
 - `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv`
 - `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.md`
 - `/workspace/ckpts/pas_stress_recovery/stress_correlation_manifest_opt27b.json`
+
+P0 observed result, recorded 2026-05-21:
+
+| Metric | Value | Interpretation |
+| --- | --- | --- |
+| `Pearson(S35,Regret40)` | `0.1625803636488299` | Raw held-out regret correlation is weak because endpoint loss confounds absolute `L40` quality. |
+| `Spearman(S35,Regret40)` | `0.09473684210526315` | Same raw-regret caveat. |
+| `Pearson(S35,Delta40)` | `0.8337100870651009` | Strong evidence that local stress predicts cross-budget degradation. |
+| `Spearman(S35,Delta40)` | `0.8285714285714285` | Strong rank-level stress/degradation relation. |
+| `partial_corr(S35,Regret40|L30)` | `0.8107895146421564` | Main P0 positive result: stress predicts held-out regret after controlling endpoint quality. |
+| `partial_corr(S35,L40|L30)` | `0.8107895146421564` | Equivalent controlled stress/future-loss signal. |
+| `linear_regression:L40~L30+S35` | `beta_L30=0.9626057100144196`, `beta_S35=1.2588788204496062`, `R2=0.8817489807506785` | `S35` remains a positive predictor alongside endpoint loss. |
+| `linear_regression:Regret40~L30+S35` | `beta_L30=0.962605710014419`, `beta_S35=1.2588788204496064`, `R2=0.8817489807506785` | Same controlled-regret result. |
+
+P0 reading: proceed to P1 same-protocol recovery. The claim should be phrased
+as "local stress predicts cross-budget degradation and controlled held-out
+regret", not as raw `S35` alone ranking absolute `Regret40`.
 
 P1 command sequence:
 
