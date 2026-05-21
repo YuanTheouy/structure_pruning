@@ -14,7 +14,7 @@ OUTPUT_DIR=""
 RECOVERY_SUBSET=""
 BATCH_SIZE="8"
 NUM_SAMPLES="64"
-RECOVERY_METHOD="ridge_reconstruction"
+RECOVERY_METHOD="ffn_only_ridge_reconstruction"
 RECON_SAMPLE="16"
 DRY_RUN="false"
 FORCE="false"
@@ -133,6 +133,7 @@ for row in subset_rows:
         f"--seed={seed}",
         "--enable_downstream=false",
         "--recon",
+        "--recon_ffn_only",
         f"--recon_sample={recon_sample}",
     ]
     print(" ".join(shlex.quote(part) for part in cmd))

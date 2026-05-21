@@ -14,7 +14,7 @@ OUTPUT_DIR=""
 RECOVERY_SUBSET=""
 BATCH_SIZE="8"
 NUM_SAMPLES="64"
-RECOVERY_METHOD="ridge_reconstruction"
+RECOVERY_METHOD="ffn_only_ridge_reconstruction"
 RECON_SAMPLE="16"
 GPU_IDS="${GPU_IDS:-0 1 2 3 4 5 6 7}"
 DRY_RUN="false"
@@ -176,6 +176,7 @@ for index, row in enumerate(subset_rows):
         "--gpu_id=0",
         "--enable_downstream=false",
         "--recon",
+        "--recon_ffn_only",
         f"--recon_sample={recon_sample}",
     ]
     commands_by_gpu[gpu].append(f"echo '=> recovery {cid} on visible GPU {gpu}'")

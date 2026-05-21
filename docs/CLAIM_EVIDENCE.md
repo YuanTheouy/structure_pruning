@@ -372,8 +372,9 @@ bash scripts/pas_run_recovery_multigpu.sh \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
   --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
-  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly \
   --gpu-ids "0 1 2 3 4 5 6 7" \
+  --recovery-method ffn_only_ridge_reconstruction \
   --batch-size 8 \
   --num-samples 64 \
   --recon-sample 16
@@ -387,20 +388,26 @@ python scripts/pas_collect_recovery_results.py \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
   --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
-  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly \
+  --recovery-method ffn_only_ridge_reconstruction \
   --output-dir /workspace/ckpts/pas_stress_recovery
 ```
 
 P1 expected artifacts:
 
 - `/workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv`
-- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_multigpu_manifest.json`
-- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_launch.tsv`
-- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands_gpu*.sh`
-- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025/logs/recovery_gpu*.log`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_multigpu_manifest.json`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_launch.tsv`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_commands_gpu*.sh`
+- `/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/logs/recovery_gpu*.log`
 - `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/recovery_analysis_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/recovery_manifest_opt27b.json`
+
+Protocol note: P1 uses `ffn_only_ridge_reconstruction`. Attention heads are
+structurally pruned without ridge reconstruction because the old OPT head-recon
+path can leave `out_proj` dimensions inconsistent; FFN modules receive the same
+ridge recovery protocol for every candidate.
 
 Interpretation guardrail: if P0 or P1 fails, do not claim PAS improves
 recovery and do not start RPVS as a rescue experiment.

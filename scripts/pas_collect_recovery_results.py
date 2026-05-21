@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--recovery-subset", required=True)
     parser.add_argument("--recovery-dir", required=True)
-    parser.add_argument("--recovery-method", default="ridge_reconstruction")
+    parser.add_argument("--recovery-method", default="ffn_only_ridge_reconstruction")
     parser.add_argument("--recovery-steps", default="")
     parser.add_argument("--lora-rank", default="")
     parser.add_argument("--lora-alpha", default="")

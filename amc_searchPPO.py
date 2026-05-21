@@ -110,6 +110,12 @@ def parse_args():
     parser.add_argument('--structure', dest='structure', action='store_true', help='structure prune or unstructure')
     parser.add_argument("--sparsity_type", type=str, help='N:M')
     parser.add_argument('--recon', dest='recon', action='store_true', help='reconstruction or not')
+    parser.add_argument(
+        '--recon_ffn_only',
+        dest='recon_ffn_only',
+        action='store_true',
+        help='apply reconstruction only to FFN pruning steps; attention heads are structurally pruned without ridge recovery',
+    )
 
     # parser.add_argument('--n_calibration_batches', default=60, type=int,
     #                     help='n_calibration_batches')

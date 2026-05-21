@@ -895,8 +895,9 @@ bash scripts/pas_run_recovery_multigpu.sh \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
   --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
-  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --output-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly \
   --gpu-ids "0 1 2 3 4 5 6 7" \
+  --recovery-method ffn_only_ridge_reconstruction \
   --num-samples 64 \
   --batch-size 8 \
   --recon-sample 16
@@ -910,7 +911,8 @@ python scripts/pas_collect_recovery_results.py \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
   --recovery-subset /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv \
-  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025 \
+  --recovery-dir /workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly \
+  --recovery-method ffn_only_ridge_reconstruction \
   --output-dir /workspace/ckpts/pas_stress_recovery
 ```
 
@@ -918,16 +920,22 @@ Expected P1 artifacts:
 
 ```text
 /workspace/ckpts/pas_stress_recovery/recovery_subset_opt27b_seed3025.csv
-/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_multigpu_manifest.json
-/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_launch.tsv
-/workspace/ckpts/pas_stress_recovery/recovery_seed3025/recovery_commands_gpu*.sh
-/workspace/ckpts/pas_stress_recovery/recovery_seed3025/logs/recovery_gpu*.log
+/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_multigpu_manifest.json
+/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_launch.tsv
+/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/recovery_commands_gpu*.sh
+/workspace/ckpts/pas_stress_recovery/recovery_seed3025_ffnonly/logs/recovery_gpu*.log
 /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv
 /workspace/ckpts/pas_stress_recovery/recovery_analysis_opt27b_seed3025.csv
 /workspace/ckpts/pas_stress_recovery/recovery_manifest_opt27b.json
 ```
 
 P1 pass condition: every candidate in the fixed subset must use the same recovery protocol. `S35` should predict recovered `L30` or `RecoveryGain`. If P1 fails, do not claim PAS improves recovery.
+
+Protocol note: the active P1 recovery protocol is
+`ffn_only_ridge_reconstruction`. Attention heads are still structurally pruned,
+but ridge recovery is applied only to FFN modules. This avoids the legacy OPT
+head-reconstruction shape mismatch while keeping one identical recovery
+protocol for every candidate.
 
 Optional figures after P0/P1:
 

@@ -252,6 +252,7 @@ class ChannelPruningEnv:
         self.acc_metric = args.acc_metric
         self.recon = args.recon
         self.recon_prune = args.recon
+        self.recon_ffn_only = getattr(args, "recon_ffn_only", False)
 
         self.export_model = export_model
         self.use_new_input = use_new_input
@@ -971,6 +972,7 @@ class ChannelPruningEnv:
         compute_device = self.device
         hidden_metric = self.A_metric[global_idx].to(compute_device)      
         if head:
+            recon_head = self.recon and not self.recon_ffn_only
             # --- [处理注意力头 ATTENTION HEAD] ---
             d_prime = format_rank(preserve_ratio * self.num_key_value_heads)
             ratio = d_prime / self.num_key_value_heads
@@ -1008,7 +1010,7 @@ class ChannelPruningEnv:
                     attn.v_proj.bias.data = attn.v_proj.bias.data.reshape(self.num_attention_heads, -1)[mask, :].reshape(-1)
                 
                 # Prune output projection (out_proj) and handle reconstruction
-                if self.recon:
+                if recon_head:
                     data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
                     handles_inputs = target_layer.register_forward_hook(data_saver)
                     inputs = []
@@ -1063,7 +1065,7 @@ class ChannelPruningEnv:
                     attn.q_proj.bias.data = attn.q_proj.bias.data.reshape(self.num_key_value_heads, -1)[mask, :].reshape(-1)
                 
                 # Prune output projection (o_proj) and handle reconstruction
-                if self.recon:
+                if recon_head:
                     data_saver = DataSaverHook(store_input=True, store_output=False, stop_forward=True)
                     handles_inputs = target_layer.register_forward_hook(data_saver)
                     inputs = []
