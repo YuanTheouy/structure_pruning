@@ -159,16 +159,16 @@ def nested_project_score_to_policy(
     target_sparsity: float,
     module_costs: dict[str, Any],
     *,
-    base_d_primes: list[int],
+    cap_d_primes: list[int],
     p_min: float,
     p_max: float,
 ) -> dict[str, Any]:
-    """Project with per-module caps from a base projection.
+    """Project with per-module caps from an earlier nested projection.
 
     This is intentionally a repair/ablation projector, not the current PAS
     projector. It mirrors the current budget correction while replacing the
-    scalar upper bound with per-module base caps so stricter projections cannot
-    preserve dimensions outside the base structure.
+    scalar upper bound with per-module caps so stricter projections cannot
+    preserve dimensions outside the previous nested structure.
     """
 
     actions = np.abs(np.asarray(score_vector, dtype=np.float64))
@@ -179,8 +179,8 @@ def nested_project_score_to_policy(
     target_sparsity = float(np.clip(target_sparsity, 0.0, 1.0))
     p_min = float(p_min)
     p_max = float(p_max)
-    base_caps = np.asarray(base_d_primes, dtype=np.float64) / dim_list
-    per_module_max = np.minimum(p_max, base_caps)
+    cap_d_array = np.asarray(cap_d_primes, dtype=np.float64)
+    per_module_max = np.minimum(p_max, cap_d_array / dim_list)
     actions = np.minimum(np.clip(actions, p_min, p_max), per_module_max)
 
     def cost_parts(idx: int) -> tuple[float, float]:
@@ -233,11 +233,11 @@ def nested_project_score_to_policy(
     d_primes = [max(1, int(np.around(ratio * dim))) for ratio, dim in zip(actions, dim_list)]
     if channel_round > 0:
         d_primes = [
-            min(int(base_cap), int(dim), int(math.ceil(d_prime / channel_round) * channel_round))
-            for d_prime, dim, base_cap in zip(d_primes, dim_list, base_d_primes)
+            min(int(cap_d), int(dim), int(math.ceil(d_prime / channel_round) * channel_round))
+            for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_primes)
         ]
     else:
-        d_primes = [min(int(base_cap), int(dim), int(d_prime)) for d_prime, dim, base_cap in zip(d_primes, dim_list, base_d_primes)]
+        d_primes = [min(int(cap_d), int(dim), int(d_prime)) for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_primes)]
 
     rounded = np.asarray([d_prime / dim if dim > 0 else 0.0 for d_prime, dim in zip(d_primes, dim_list)], dtype=np.float64)
     overshoot = get_computation(rounded) - target_computation
@@ -269,7 +269,7 @@ def nested_project_score_to_policy(
         "metadata": {
             **budget,
             "projection_mode": "nested_from_base",
-            "base_caps_enforced": True,
+            "per_module_caps_enforced": True,
         },
     }
 
@@ -289,20 +289,25 @@ def build_projections(
 
     if base_sigma not in current:
         current[base_sigma] = project_candidate_score_with_metadata(env, score_vector, base_sigma)
-    base_d = policy_to_dims(current[base_sigma]["policy"], dim_list)
     nested: dict[float, dict[str, Any]] = {}
+    previous_cap_d: list[int] | None = None
     for sigma in sparsities:
         if sigma <= base_sigma:
             nested[sigma] = current[sigma]
+            if sigma == base_sigma:
+                previous_cap_d = policy_to_dims(nested[sigma]["policy"], dim_list)
         else:
+            if previous_cap_d is None:
+                previous_cap_d = policy_to_dims(current[base_sigma]["policy"], dim_list)
             nested[sigma] = nested_project_score_to_policy(
                 score_vector,
                 sigma,
                 module_costs,
-                base_d_primes=base_d,
+                cap_d_primes=previous_cap_d,
                 p_min=env.lbound,
                 p_max=env.rbound,
             )
+            previous_cap_d = policy_to_dims(nested[sigma]["policy"], dim_list)
     return nested
 
 
@@ -484,6 +489,7 @@ def main() -> int:
             "candidate_pool": str(candidate_pool),
             "sparsities": sparsities,
             "projection_mode": args.projection_mode,
+            "nested_cap_strategy": "cascading_previous_budget" if args.projection_mode == "nested_from_base" else "",
             "base_sigma": base_sigma,
             "candidate_count": len(candidates),
             "module_count": len(dim_list),

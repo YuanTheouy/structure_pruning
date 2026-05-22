@@ -194,8 +194,17 @@ It supports two modes:
 
 Use `current` first to audit the PAS projector that produced the current
 artifacts. Use `nested_from_base` only if `current` reports violations, to
-materialize the strict repair path where every stricter projection is capped by
-the base preserved dimensions.
+materialize the strict repair path. In `nested_from_base`, the base `0.30`
+projection initializes the retained dimensions, and every later stricter budget
+is capped by the immediately previous projection. This cascading cap is required
+for adjacent nestedness:
+
+```text
+d_i(0.3025) <= d_i(0.3000)
+d_i(0.3050) <= d_i(0.3025)
+d_i(0.3100) <= d_i(0.3050)
+...
+```
 
 After implementation, run:
 
