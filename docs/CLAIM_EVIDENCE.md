@@ -288,7 +288,7 @@ starting periodic PAS/RPVS.
 | --- | --- | --- |
 | Claim 1: `S35` predicts cross-budget regret | P0 positive on seed `3025` after controlling `L30` | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
 | Claim 2: `S35` predicts recovery quality | P1 mixed/weak on seed `3025`; do not claim PAS improves recovery | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
-| Claim 3: `S35` predicts downstream retention | gated/exploratory only unless a stronger recovery protocol passes | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
+| Claim 3: `S35` predicts raw downstream retention beyond endpoint PPL | pending raw/no-compensation downstream eval; independent of P1 recovery | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
 
 P0 command sequence:
 
@@ -427,10 +427,11 @@ Therefore the manuscript may use P0 for controlled cross-budget stress, but
 must not claim PAS improves or predicts recovery quality from this P1 alone.
 
 Interpretation guardrail: because P1 is mixed/weak, do not claim PAS improves
-recovery and do not start RPVS as a rescue experiment. P2 downstream may be run
-only as exploratory retention diagnostics, not as a proof that P1 passed.
+recovery and do not start RPVS as a rescue experiment. P2 downstream should be
+run as a separate raw/no-compensation capability-retention test, not as part of
+the recovery proof chain.
 
-P2 downstream preparation, now exploratory/gated after mixed P1:
+P2 raw downstream preparation:
 
 ```bash
 cd /workspace/structure_pruning
@@ -446,23 +447,22 @@ bash scripts/pas_run_downstream_batch.sh \
   --target-sigma 0.30 \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
-  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
-  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --candidate-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw \
   --gpu-ids "0 1 2 3 4 5 6 7" \
-  --tasks piqa,hellaswag,winogrande,boolq \
+  --tasks piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq \
   --limit 100 \
   --batch-size 4 \
   --eval-num-samples 64 \
-  --recovery-method ffn_only_ridge_reconstruction \
-  --recon-sample 16 \
+  --recovery-method no_recovery \
   --dry-run
 ```
 
-The command above only materializes shard commands. If P1 passes and the
-commands look right, run the same command without `--dry-run` and with
-`RUN_DOWNSTREAM_NOW=true`. P2 recompiles each candidate with the same
-`ffn_only_ridge_reconstruction` protocol and evaluates downstream tasks in the
-same process, avoiding direct loading of irregular pruned checkpoints.
+The command above only materializes shard commands. If the commands look right,
+run the same command without `--dry-run` and with `RUN_DOWNSTREAM_NOW=true`. P2
+recompiles each candidate as a raw no-compensation checkpoint and evaluates
+downstream tasks in the same process, avoiding direct loading of irregular
+pruned checkpoints.
 
 Collect P2 outputs after execution:
 
@@ -475,10 +475,22 @@ python scripts/pas_collect_downstream_results.py \
   --target-sigma 0.30 \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
-  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
-  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --candidate-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw \
   --output-dir /workspace/ckpts/pas_stress_recovery
 ```
+
+P2 interpretation rule: evaluate whether downstream score, and downstream drop
+if a dense baseline is supplied, is predicted by `S35` after controlling
+`L30_raw`, and inside endpoint-compatible subsets such as top-k by `L30_raw`.
+Do not claim that P2 proves recovery behavior.
+
+Expected P2 analysis artifacts:
+
+- `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv`
+- `/workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv`
+- `/workspace/ckpts/pas_stress_recovery/downstream_manifest_opt27b.json`
 
 P4 one-more-setting command slot:
 

@@ -956,8 +956,9 @@ FFN-only ridge protocol. It weakly suggests `S35` is related to recovery
 behavior, but the controlled coefficient is negative for recovered loss.
 Therefore do not claim PAS improves recovery from P1.
 
-P2 downstream task retention is prepared but should be treated as exploratory
-unless a stronger recovery protocol later passes. Generate the commands first:
+P2 raw downstream task retention is independent of the mixed P1 recovery result.
+It directly compiles raw no-compensation 30% checkpoints and asks whether
+`S35` predicts task score/drop beyond `L30_raw`. Generate the commands first:
 
 ```bash
 cd /workspace/structure_pruning
@@ -973,20 +974,19 @@ bash scripts/pas_run_downstream_batch.sh \
   --target-sigma 0.30 \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
-  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
-  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --candidate-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw \
   --gpu-ids "0 1 2 3 4 5 6 7" \
-  --tasks piqa,hellaswag,winogrande,boolq \
+  --tasks piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq \
   --limit 100 \
   --batch-size 4 \
   --eval-num-samples 64 \
-  --recovery-method ffn_only_ridge_reconstruction \
-  --recon-sample 16 \
+  --recovery-method no_recovery \
   --dry-run
 ```
 
-If downstream diagnostics are still desired after this mixed P1, execute the
-same command with:
+If the generated shard commands look right, execute the same command without
+`--dry-run` and with:
 
 ```bash
 RUN_DOWNSTREAM_NOW=true bash scripts/pas_run_downstream_batch.sh ...
@@ -995,11 +995,13 @@ RUN_DOWNSTREAM_NOW=true bash scripts/pas_run_downstream_batch.sh ...
 Expected P2 artifacts:
 
 ```text
-/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_multigpu_manifest.json
-/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_launch.tsv
-/workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly/downstream_eval/*/downstream_results.json
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw/downstream_multigpu_manifest.json
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw/downstream_launch.tsv
+/workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw/downstream_eval/*/downstream_results.json
 /workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv
 /workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.md
+/workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv
+/workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv
 /workspace/ckpts/pas_stress_recovery/downstream_manifest_opt27b.json
 ```
 
@@ -1014,8 +1016,8 @@ python scripts/pas_collect_downstream_results.py \
   --target-sigma 0.30 \
   --probe-sigma 0.35 \
   --heldout-sigma 0.40 \
-  --recovery-table /workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv \
-  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_ffnonly \
+  --candidate-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --downstream-dir /workspace/ckpts/pas_stress_recovery/downstream_seed3025_raw \
   --output-dir /workspace/ckpts/pas_stress_recovery
 ```
 

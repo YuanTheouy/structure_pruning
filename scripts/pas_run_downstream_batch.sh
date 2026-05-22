@@ -12,11 +12,11 @@ PROBE_SIGMA="0.35"
 HELDOUT_SIGMA="0.40"
 OUTPUT_DIR=""
 RECOVERY_TABLE=""
-TASKS="piqa,hellaswag,winogrande,boolq"
+TASKS="piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq"
 LIMIT="100"
 BATCH_SIZE="4"
 EVAL_NUM_SAMPLES="64"
-RECOVERY_METHOD="ffn_only_ridge_reconstruction"
+RECOVERY_METHOD="no_recovery"
 RECON_SAMPLE="16"
 GPU_IDS="${GPU_IDS:-0 1 2 3 4 5 6 7}"
 MAX_CANDIDATES=""
@@ -34,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --probe-sigma) PROBE_SIGMA="$2"; shift 2 ;;
     --heldout-sigma) HELDOUT_SIGMA="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    --candidate-table) RECOVERY_TABLE="$2"; shift 2 ;;
     --recovery-table) RECOVERY_TABLE="$2"; shift 2 ;;
     --tasks) TASKS="$2"; shift 2 ;;
     --limit) LIMIT="$2"; shift 2 ;;
@@ -50,7 +51,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MODEL" || -z "$SEED" || -z "$CANDIDATE_POOL" || -z "$OUTPUT_DIR" || -z "$RECOVERY_TABLE" ]]; then
-  echo "Missing required args: --model --seed --candidate-pool --output-dir --recovery-table" >&2
+  echo "Missing required args: --model --seed --candidate-pool --output-dir --candidate-table" >&2
   exit 2
 fi
 
@@ -125,8 +126,14 @@ with candidate_jsonl.open("r", encoding="utf-8") as handle:
         candidates[candidate["candidate_id"]] = candidate
 
 with Path(recovery_table).open("r", encoding="utf-8") as handle:
+    all_rows = list(csv.DictReader(handle))
+
+raw_methods = {"no_recovery", "raw", "raw_no_recovery", "none"}
+if recovery_method in raw_methods:
+    recovery_rows = all_rows
+else:
     recovery_rows = [
-        row for row in csv.DictReader(handle)
+        row for row in all_rows
         if row.get("notes", "") == "same_protocol_recovery"
     ]
 
@@ -148,13 +155,16 @@ for index, row in enumerate(recovery_rows):
     export_path = run_dir / "checkpoint.pth.tar"
     final_policy_path = run_dir / "final_policy.json"
     downstream_output = run_dir / "downstream_results.json"
+    checkpoint_type = "raw_no_recovery" if recovery_method in raw_methods else "recovered"
+    selected_mode = "stress_downstream_raw_no_recovery" if recovery_method in raw_methods else "stress_recovery_downstream"
     payload = {
-        "selected_mode": "stress_recovery_downstream",
+        "selected_mode": selected_mode,
         "candidate": candidate,
         "candidate_id": cid,
         "selection_tags": row.get("selection_tags", ""),
         "recovery_method": recovery_method,
-        "source_recovery_table": recovery_table,
+        "checkpoint_type": checkpoint_type,
+        "source_candidate_table": recovery_table,
         "target_sparsity": float(target_sigma),
         "local_probe_sigma": float(probe_sigma),
         "heldout_sigma": float(heldout_sigma),
@@ -189,9 +199,6 @@ for index, row in enumerate(recovery_rows):
         "--data_bsize=8",
         f"--seed={seed}",
         "--gpu_id=0",
-        "--recon",
-        "--recon_ffn_only",
-        f"--recon_sample={recon_sample}",
         "--enable_downstream=true",
         "--delayed_downstream_eval",
         f"--downstream_output={downstream_output}",
@@ -199,6 +206,12 @@ for index, row in enumerate(recovery_rows):
         f"--downstream_limit={limit}",
         f"--downstream_batch_size={batch_size}",
     ]
+    if recovery_method not in raw_methods:
+        cmd.extend([
+            "--recon",
+            "--recon_ffn_only",
+            f"--recon_sample={recon_sample}",
+        ])
     commands_by_gpu[gpu].append(f"echo '=> downstream {cid} on visible GPU {gpu}'")
     commands_by_gpu[gpu].append(" ".join(shlex.quote(part) for part in cmd))
 
@@ -229,7 +242,7 @@ manifest = {
     "dataset": dataset,
     "seed": seed,
     "candidate_pool": candidate_pool,
-    "recovery_table": recovery_table,
+    "candidate_table": recovery_table,
     "target_sigma": float(target_sigma),
     "local_probe_sigma": float(probe_sigma),
     "heldout_sigma": float(heldout_sigma),
@@ -262,7 +275,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-echo "Downstream execution is gated by P1. If P1 passed, re-run with RUN_DOWNSTREAM_NOW=true."
+echo "Downstream execution is gated. Re-run with RUN_DOWNSTREAM_NOW=true to launch shards."
 if [[ "${RUN_DOWNSTREAM_NOW:-false}" != "true" ]]; then
   exit 0
 fi
