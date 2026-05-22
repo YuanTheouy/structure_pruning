@@ -84,6 +84,8 @@ Write these artifacts:
 nestedness_summary.csv
 nestedness_violations.csv
 nestedness_by_candidate.csv
+mask_change_summary.csv
+mask_change_by_candidate.csv
 nestedness_manifest.json
 ```
 
@@ -117,6 +119,37 @@ One row per candidate and sparsity pair:
 candidate_id,sigma_a,sigma_b,has_violation,num_violation_modules,
 max_dimension_increase,total_dimension_increase,
 actual_sparsity_a,actual_sparsity_b
+```
+
+### `mask_change_summary.csv`
+
+One row per adjacent sparsity pair:
+
+```text
+model,dataset,seed,candidate_pool,num_candidates,sigma_a,sigma_b,delta_sigma,
+num_candidate_pairs,num_candidates_with_any_change,
+fraction_candidates_with_any_change,
+avg_changed_modules,max_changed_modules,
+avg_abs_dimension_change,max_abs_dimension_change,
+avg_removed_dimensions,max_removed_dimensions,
+avg_added_dimensions,max_added_dimensions,
+avg_changed_head_modules,max_changed_head_modules,
+avg_changed_ffn_modules,max_changed_ffn_modules,
+avg_changed_head_dimensions,max_changed_head_dimensions,
+avg_changed_ffn_dimensions,max_changed_ffn_dimensions,
+too_small_to_generate_signal,all_pairs_nested,projection_mode,base_sigma
+```
+
+### `mask_change_by_candidate.csv`
+
+One row per candidate and adjacent sparsity pair:
+
+```text
+candidate_id,sigma_a,sigma_b,has_any_change,
+num_changed_modules,num_changed_head_modules,num_changed_ffn_modules,
+total_abs_dimension_change,total_removed_dimensions,total_added_dimensions,
+total_changed_head_dimensions,total_changed_ffn_dimensions,
+max_abs_dimension_change,actual_sparsity_a,actual_sparsity_b,projection_mode
 ```
 
 ## Suggested Implementation Notes
@@ -222,6 +255,7 @@ python scripts/pas_check_projection_nestedness.py \
   --output-dir /workspace/ckpts/pas_nested_projection_check/opt27b_seed3025
 
 cat /workspace/ckpts/pas_nested_projection_check/opt27b_seed3025/nestedness_summary.csv
+cat /workspace/ckpts/pas_nested_projection_check/opt27b_seed3025/mask_change_summary.csv
 cat /workspace/ckpts/pas_nested_projection_check/opt27b_seed3025/nestedness_violations.csv | head -n 30
 ```
 

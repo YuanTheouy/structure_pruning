@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit whether same-vector PAS budget projections are structurally nested."""
+"""Audit same-vector PAS projection nestedness and local mask-change size."""
 
 from __future__ import annotations
 
@@ -343,6 +343,7 @@ def main() -> int:
     dim_list = [int(dim) for dim in module_costs["dim_list"]]
 
     by_candidate_rows: list[dict[str, Any]] = []
+    mask_change_rows: list[dict[str, Any]] = []
     violation_rows: list[dict[str, Any]] = []
     summary_acc: dict[tuple[float, float], dict[str, Any]] = {
         (a, b): {
@@ -351,6 +352,15 @@ def main() -> int:
             "total_violation_modules": 0,
             "max_dimension_increase": 0,
             "max_relative_dimension_increase": 0.0,
+            "candidates_with_any_change": 0,
+            "changed_modules_values": [],
+            "changed_units_values": [],
+            "removed_units_values": [],
+            "added_units_values": [],
+            "changed_head_modules_values": [],
+            "changed_ffn_modules_values": [],
+            "changed_head_units_values": [],
+            "changed_ffn_units_values": [],
         }
         for a, b in zip(sparsities[:-1], sparsities[1:])
     }
@@ -375,7 +385,30 @@ def main() -> int:
             proj_a = projections[sigma_a]
             proj_b = projections[sigma_b]
             pair_violations = []
+            changed_modules = 0
+            changed_head_modules = 0
+            changed_ffn_modules = 0
+            changed_units = 0
+            removed_units = 0
+            added_units = 0
+            changed_head_units = 0
+            changed_ffn_units = 0
+            max_abs_dimension_change = 0
             for module_index, (d_a, d_b, dim) in enumerate(zip(dims_a, dims_b, dim_list)):
+                delta_d = d_b - d_a
+                abs_delta = abs(delta_d)
+                if abs_delta > 0:
+                    changed_modules += 1
+                    changed_units += abs_delta
+                    removed_units += max(0, -delta_d)
+                    added_units += max(0, delta_d)
+                    max_abs_dimension_change = max(max_abs_dimension_change, abs_delta)
+                    if module_index % 2 == 0:
+                        changed_head_modules += 1
+                        changed_head_units += abs_delta
+                    else:
+                        changed_ffn_modules += 1
+                        changed_ffn_units += abs_delta
                 if d_b <= d_a:
                     continue
                 increase = d_b - d_a
@@ -404,6 +437,7 @@ def main() -> int:
 
             max_inc = max((row["dimension_increase"] for row in pair_violations), default=0)
             total_inc = sum(row["dimension_increase"] for row in pair_violations)
+            has_any_change = changed_modules > 0
             by_candidate_rows.append(
                 {
                     "candidate_id": candidate_id,
@@ -418,6 +452,26 @@ def main() -> int:
                     "projection_mode": args.projection_mode,
                 }
             )
+            mask_change_rows.append(
+                {
+                    "candidate_id": candidate_id,
+                    "sigma_a": sigma_a,
+                    "sigma_b": sigma_b,
+                    "has_any_change": has_any_change,
+                    "num_changed_modules": changed_modules,
+                    "num_changed_head_modules": changed_head_modules,
+                    "num_changed_ffn_modules": changed_ffn_modules,
+                    "total_abs_dimension_change": changed_units,
+                    "total_removed_dimensions": removed_units,
+                    "total_added_dimensions": added_units,
+                    "total_changed_head_dimensions": changed_head_units,
+                    "total_changed_ffn_dimensions": changed_ffn_units,
+                    "max_abs_dimension_change": max_abs_dimension_change,
+                    "actual_sparsity_a": proj_a["actual_sparsity"],
+                    "actual_sparsity_b": proj_b["actual_sparsity"],
+                    "projection_mode": args.projection_mode,
+                }
+            )
 
             acc = summary_acc[(sigma_a, sigma_b)]
             acc["candidate_pairs"] += 1
@@ -427,10 +481,31 @@ def main() -> int:
             acc["max_dimension_increase"] = max(acc["max_dimension_increase"], max_inc)
             max_rel = max((row["relative_dimension_increase"] for row in pair_violations), default=0.0)
             acc["max_relative_dimension_increase"] = max(acc["max_relative_dimension_increase"], max_rel)
+            if has_any_change:
+                acc["candidates_with_any_change"] += 1
+            acc["changed_modules_values"].append(changed_modules)
+            acc["changed_units_values"].append(changed_units)
+            acc["removed_units_values"].append(removed_units)
+            acc["added_units_values"].append(added_units)
+            acc["changed_head_modules_values"].append(changed_head_modules)
+            acc["changed_ffn_modules_values"].append(changed_ffn_modules)
+            acc["changed_head_units_values"].append(changed_head_units)
+            acc["changed_ffn_units_values"].append(changed_ffn_units)
 
     summary_rows: list[dict[str, Any]] = []
+    mask_summary_rows: list[dict[str, Any]] = []
+
+    def mean(values: list[int | float]) -> float:
+        return float(np.mean(values)) if values else 0.0
+
+    def max_value(values: list[int | float]) -> float:
+        return float(np.max(values)) if values else 0.0
+
     for sigma_a, sigma_b in zip(sparsities[:-1], sparsities[1:]):
         acc = summary_acc[(sigma_a, sigma_b)]
+        num_candidates = int(acc["candidate_pairs"])
+        candidates_with_change = int(acc["candidates_with_any_change"])
+        fraction_changed = candidates_with_change / num_candidates if num_candidates else 0.0
         summary_rows.append(
             {
                 "model": model_name,
@@ -450,10 +525,49 @@ def main() -> int:
                 "base_sigma": base_sigma,
             }
         )
+        avg_changed_modules = mean(acc["changed_modules_values"])
+        avg_changed_units = mean(acc["changed_units_values"])
+        mask_summary_rows.append(
+            {
+                "model": model_name,
+                "dataset": args.dataset,
+                "seed": args.seed,
+                "candidate_pool": str(candidate_pool),
+                "num_candidates": len(candidates),
+                "sigma_a": sigma_a,
+                "sigma_b": sigma_b,
+                "delta_sigma": sigma_b - sigma_a,
+                "num_candidate_pairs": num_candidates,
+                "num_candidates_with_any_change": candidates_with_change,
+                "fraction_candidates_with_any_change": fraction_changed,
+                "avg_changed_modules": avg_changed_modules,
+                "max_changed_modules": max_value(acc["changed_modules_values"]),
+                "avg_abs_dimension_change": avg_changed_units,
+                "max_abs_dimension_change": max_value(acc["changed_units_values"]),
+                "avg_removed_dimensions": mean(acc["removed_units_values"]),
+                "max_removed_dimensions": max_value(acc["removed_units_values"]),
+                "avg_added_dimensions": mean(acc["added_units_values"]),
+                "max_added_dimensions": max_value(acc["added_units_values"]),
+                "avg_changed_head_modules": mean(acc["changed_head_modules_values"]),
+                "max_changed_head_modules": max_value(acc["changed_head_modules_values"]),
+                "avg_changed_ffn_modules": mean(acc["changed_ffn_modules_values"]),
+                "max_changed_ffn_modules": max_value(acc["changed_ffn_modules_values"]),
+                "avg_changed_head_dimensions": mean(acc["changed_head_units_values"]),
+                "max_changed_head_dimensions": max_value(acc["changed_head_units_values"]),
+                "avg_changed_ffn_dimensions": mean(acc["changed_ffn_units_values"]),
+                "max_changed_ffn_dimensions": max_value(acc["changed_ffn_units_values"]),
+                "too_small_to_generate_signal": candidates_with_change == 0 or avg_changed_units < 1.0,
+                "all_pairs_nested": acc["total_violation_modules"] == 0,
+                "projection_mode": args.projection_mode,
+                "base_sigma": base_sigma,
+            }
+        )
 
     summary_path = output_dir / "nestedness_summary.csv"
     violations_path = output_dir / "nestedness_violations.csv"
     by_candidate_path = output_dir / "nestedness_by_candidate.csv"
+    mask_summary_path = output_dir / "mask_change_summary.csv"
+    mask_by_candidate_path = output_dir / "mask_change_by_candidate.csv"
     manifest_path = output_dir / "nestedness_manifest.json"
     write_csv(summary_path, summary_rows)
     write_csv(violations_path, violation_rows, fieldnames=[
@@ -477,6 +591,8 @@ def main() -> int:
         "projection_mode",
     ])
     write_csv(by_candidate_path, by_candidate_rows)
+    write_csv(mask_summary_path, mask_summary_rows)
+    write_csv(mask_by_candidate_path, mask_change_rows)
     write_json(
         manifest_path,
         {
@@ -500,6 +616,8 @@ def main() -> int:
                 "nestedness_summary": str(summary_path),
                 "nestedness_violations": str(violations_path),
                 "nestedness_by_candidate": str(by_candidate_path),
+                "mask_change_summary": str(mask_summary_path),
+                "mask_change_by_candidate": str(mask_by_candidate_path),
                 "nestedness_manifest": str(manifest_path),
             },
         },
@@ -507,6 +625,8 @@ def main() -> int:
     print(f"Wrote {summary_path}")
     print(f"Wrote {violations_path}")
     print(f"Wrote {by_candidate_path}")
+    print(f"Wrote {mask_summary_path}")
+    print(f"Wrote {mask_by_candidate_path}")
     print(f"Wrote {manifest_path}")
     return 0
 
