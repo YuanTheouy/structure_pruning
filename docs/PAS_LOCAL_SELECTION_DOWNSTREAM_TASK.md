@@ -220,6 +220,35 @@ S31 -> L40 / Regret40
 
 Do not run L31 before P0 analysis unless implementation cost is trivial.
 
+P1 is now allowed because P0 is mixed/ambiguous. Run a single PPL probe centered
+at `30.50` with radius `0.50`:
+
+```text
+probe_sparsity = 0.3050
+ew_delta       = 0.0050
+```
+
+This produces `L30`, `L30.50`, and `L31.00` in one pass. Merge the result with
+the existing `30.25/30.50` local table before rerunning the local-selection
+analysis.
+
+Also audit the negative local-slope cases against projection nestedness:
+
+```text
+scripts/pas_audit_local_delta_nestedness.py
+```
+
+Use the existing P0 projection sweep artifacts:
+
+```text
+/workspace/ckpts/pas_nested_projection_check/opt27b_seed3025_delta_sweep/nestedness_by_candidate.csv
+/workspace/ckpts/pas_nested_projection_check/opt27b_seed3025_delta_sweep/nestedness_violations.csv
+/workspace/ckpts/pas_nested_projection_check/opt27b_seed3025_delta_sweep/mask_change_by_candidate.csv
+```
+
+This directly tests whether negative `S3025/S3050/S31` examples are driven by
+non-nested re-additions or other large mask jumps.
+
 ## Server Commands
 
 P0 analysis:

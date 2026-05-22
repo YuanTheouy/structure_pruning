@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 TASK_ORDER = ["piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "boolq"]
+BASE_RULES = ["FF-Endpoint", "PAS-S30.25", "PAS-S30.50", "PAS-S35", "Oracle-Downstream30", "Oracle-L40"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,7 +74,7 @@ def first_value(row: dict[str, str], *keys: str) -> str:
 
 
 def normalize_local(row: dict[str, str]) -> dict[str, object]:
-    return {
+    out = {
         "candidate_id": row["candidate_id"],
         "L30": row.get("L30", ""),
         "L3025": row.get("L3025", ""),
@@ -84,6 +85,14 @@ def normalize_local(row: dict[str, str]) -> dict[str, object]:
         "PPL3025": row.get("PPL3025", ""),
         "PPL3050": row.get("PPL3050", ""),
     }
+    for key in ("L31", "L3100", "S31", "S3100", "PPL31", "PPL3100"):
+        if row.get(key) not in ("", None):
+            out[key] = row.get(key, "")
+    if "S31" not in out and "S3100" in out:
+        out["S31"] = out["S3100"]
+    if "L31" not in out and "L3100" in out:
+        out["L31"] = out["L3100"]
+    return out
 
 
 def normalize_stress(row: dict[str, str]) -> dict[str, object]:
@@ -175,11 +184,19 @@ def scope_rows(rows: list[dict[str, object]], top_m: list[int], epsilons: list[f
     return scopes
 
 
+def available_rules(rows: list[dict[str, object]]) -> list[str]:
+    rules = BASE_RULES[:]
+    if any(numeric(row, "S31") is not None or numeric(row, "S3100") is not None for row in rows):
+        rules.insert(3, "PAS-S31")
+    return rules
+
+
 def choose_candidate(rows: list[dict[str, object]], rule: str) -> tuple[dict[str, object] | None, object]:
     specs = {
         "FF-Endpoint": ("L30", False),
         "PAS-S30.25": ("S3025", False),
         "PAS-S30.50": ("S3050", False),
+        "PAS-S31": ("S31", False),
         "PAS-S35": ("S35", False),
         "Oracle-Downstream30": ("avg_pruned_score", True),
         "Oracle-L40": ("L40", False),
@@ -204,7 +221,7 @@ def selection_table(scopes: list[tuple[str, list[dict[str, object]]]]) -> list[d
     existing_tasks = {key for _, subset in scopes for row in subset for key in row if key in TASK_ORDER}
     task_columns = [task for task in TASK_ORDER if task in existing_tasks]
     for scope_name, subset in scopes:
-        for rule in ["FF-Endpoint", "PAS-S30.25", "PAS-S30.50", "PAS-S35", "Oracle-Downstream30", "Oracle-L40"]:
+        for rule in available_rules(subset):
             selected, score = choose_candidate(subset, rule)
             if selected is None:
                 rows.append({"rule": rule, "selection_scope": scope_name, "scope_size": len(subset), "candidate_id": "", "selection_score": ""})
@@ -219,6 +236,7 @@ def selection_table(scopes: list[tuple[str, list[dict[str, object]]]]) -> list[d
                 "L30": selected.get("L30", ""),
                 "S3025": selected.get("S3025", ""),
                 "S3050": selected.get("S3050", ""),
+                "S31": selected.get("S31", selected.get("S3100", "")),
                 "S35": selected.get("S35", ""),
                 "L40": selected.get("L40", ""),
                 "Regret40": selected.get("Regret40", ""),
@@ -288,7 +306,8 @@ def partial_corr(xs: list[float], ys: list[float], controls: list[float]) -> flo
 
 def correlation_table(scopes: list[tuple[str, list[dict[str, object]]]]) -> list[dict[str, object]]:
     output: list[dict[str, object]] = []
-    predictors = ["S3025", "S3050", "S35"]
+    has_s31 = any(numeric(row, "S31") is not None or numeric(row, "S3100") is not None for _, subset in scopes for row in subset)
+    predictors = ["S3025", "S3050"] + (["S31"] if has_s31 else []) + ["S35"]
     targets = [
         ("avg_pruned_score", "higher_is_better", "negative_if_local_slope_means_fragility"),
         ("L40", "lower_is_better", "positive_if_signal_predicts_stress_loss"),
@@ -344,6 +363,7 @@ def write_selection_md(path: Path, rows: list[dict[str, object]]) -> None:
         "L30",
         "S3025",
         "S3050",
+        "S31",
         "S35",
         "L40",
         "Regret40",
@@ -416,7 +436,7 @@ def main() -> int:
         },
         "joined_candidates": len(rows),
         "selection_scopes": [name for name, _ in scopes],
-        "selection_rules": ["FF-Endpoint", "PAS-S30.25", "PAS-S30.50", "PAS-S35", "Oracle-Downstream30", "Oracle-L40"],
+        "selection_rules": available_rules(rows),
         "analysis_only_rules": ["Oracle-Downstream30", "Oracle-L40"],
         "artifacts": {
             "local_selection_downstream_table": str(selection_csv),
