@@ -77,6 +77,9 @@ Use `docs/PAS_STRESS_RECOVERY_EVIDENCE_2026_05_21.md` as the active plan:
 2. P1: fixed recovery subset with identical reconstruction/recovery protocol
    for all candidates. Completed with mixed/weak recovery evidence; keep as a
    negative/guardrail result unless a stronger recovery protocol is later run.
-3. P2: raw no-compensation downstream retention. This is independent of P1:
-   test whether PPL alone is incomplete by checking whether `S35` predicts task
-   drops after controlling `L30_raw` and inside endpoint-similar subsets.
+3. P2: raw no-compensation downstream retention completed on 2026-05-22 with
+   formal `lm-eval-harness` evaluation. The result is weak/mixed:
+   all-candidate `partial_corr(S35,avg_pruned_score|L30_raw)=-0.1879`, while
+   endpoint-close subsets are mildly positive (`top8=0.1432`, `top13=0.2512`).
+   Do not use this as a headline downstream claim; it is a capability-retention
+   sanity check that leaves the main evidence on P0 cross-budget stress.

@@ -1021,6 +1021,42 @@ python scripts/pas_collect_downstream_results.py \
   --output-dir /workspace/ckpts/pas_stress_recovery
 ```
 
+Observed P2 result, recorded 2026-05-22:
+
+```text
+artifacts:
+  /workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv
+  /workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv
+  /workspace/ckpts/pas_stress_recovery/downstream_manifest_opt27b.json
+protocol:
+  raw no-compensation 30% compiled checkpoints
+  lm-eval-harness direct path, no lightweight fallback
+  tasks = piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq
+  candidate count = 20
+  task count per candidate = 6
+```
+
+P2 correlation summary:
+
+| Scope | Metric | Value | n |
+| --- | --- | --- | --- |
+| all candidates | `Pearson(S35,avg_pruned_score)` | `-0.10952013151926386` | `20` |
+| all candidates | `Spearman(S35,avg_pruned_score)` | `0.03837472869634838` | `20` |
+| all candidates | `partial_corr(S35,avg_pruned_score|L30_raw)` | `-0.18791160797431497` | `20` |
+| top8 by `L30_raw` | `Pearson(S35,avg_pruned_score)` | `0.10133121948503672` | `8` |
+| top8 by `L30_raw` | `Spearman(S35,avg_pruned_score)` | `0.11904761904761904` | `8` |
+| top8 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.14316636512435285` | `8` |
+| top13 by `L30_raw` | `Pearson(S35,avg_pruned_score)` | `0.22882365519903972` | `13` |
+| top13 by `L30_raw` | `Spearman(S35,avg_pruned_score)` | `0.3021978021978022` | `13` |
+| top13 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.25121220430950486` | `13` |
+
+P2 status: weak/mixed. It does not justify a strong downstream-retention claim.
+The endpoint-close subsets show mild positive relations, but the all-candidate
+controlled relation is negative. Dense baseline scores were not supplied, so
+`avg_drop` and `avg_retention` are blank by design; this run analyzes raw
+compiled-checkpoint downstream score. Keep the core paper claim on P0
+cross-budget stress.
+
 Optional figures after P0/P1:
 
 ```bash

@@ -288,7 +288,7 @@ starting periodic PAS/RPVS.
 | --- | --- | --- |
 | Claim 1: `S35` predicts cross-budget regret | P0 positive on seed `3025` after controlling `L30` | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
 | Claim 2: `S35` predicts recovery quality | P1 mixed/weak on seed `3025`; do not claim PAS improves recovery | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
-| Claim 3: `S35` predicts raw downstream retention beyond endpoint PPL | pending raw/no-compensation downstream eval; independent of P1 recovery | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
+| Claim 3: `S35` predicts raw downstream retention beyond endpoint PPL | P2 completed; evidence is weak/mixed, not a strong downstream claim | `/workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv` |
 
 P0 command sequence:
 
@@ -491,6 +491,33 @@ Expected P2 analysis artifacts:
 - `/workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv`
 - `/workspace/ckpts/pas_stress_recovery/downstream_manifest_opt27b.json`
+
+P2 observed result, recorded 2026-05-22:
+
+- Model/dataset/seed: `OPT-2.7B` / `WikiText-2` / `3025`.
+- Candidate pool: `/workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates`.
+- Protocol: raw no-compensation `0.30` compiled checkpoints, no recovery, `lm-eval-harness` direct path, `limit=100`, `batch_size=4`.
+- Tasks: `piqa`, `hellaswag`, `winogrande`, `arc_easy`, `arc_challenge`, `boolq`.
+- Completed candidates: `20`; every candidate has `task_count=6`.
+- Dense baseline was not supplied, so `avg_drop` and `avg_retention` are intentionally blank; use `avg_pruned_score`.
+
+| Scope | Metric | Value | n | Reading |
+| --- | --- | --- | --- | --- |
+| all candidates | `Pearson(S35,avg_pruned_score)` | `-0.10952013151926386` | `20` | No useful global downstream-score relation. |
+| all candidates | `Spearman(S35,avg_pruned_score)` | `0.03837472869634838` | `20` | Essentially flat rank relation. |
+| all candidates | `partial_corr(S35,avg_pruned_score|L30_raw)` | `-0.18791160797431497` | `20` | No positive controlled global signal. |
+| top8 by `L30_raw` | `Pearson(S35,avg_pruned_score)` | `0.10133121948503672` | `8` | Weak positive endpoint-close signal. |
+| top8 by `L30_raw` | `Spearman(S35,avg_pruned_score)` | `0.11904761904761904` | `8` | Weak positive endpoint-close rank signal. |
+| top8 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.14316636512435285` | `8` | Weak controlled endpoint-close signal. |
+| top13 by `L30_raw` | `Pearson(S35,avg_pruned_score)` | `0.22882365519903972` | `13` | Mild positive endpoint-close signal. |
+| top13 by `L30_raw` | `Spearman(S35,avg_pruned_score)` | `0.3021978021978022` | `13` | Mild positive endpoint-close rank signal. |
+| top13 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.25121220430950486` | `13` | Mild controlled endpoint-close signal. |
+
+P2 reading: downstream retention does not currently support a strong claim that
+`S35` predicts task score beyond `L30_raw`. The only positive evidence appears
+inside endpoint-close subsets and is mild. Keep the manuscript anchored on P0
+controlled cross-budget robustness; mention P2, if at all, as an exploratory
+capability-retention sanity check rather than a headline downstream result.
 
 P4 one-more-setting command slot:
 

@@ -78,6 +78,23 @@ the paper claim anchored on P0 cross-budget stress. Any downstream task run
 after this point should be labeled exploratory unless a stronger recovery
 protocol is tested and passes.
 
+P2 raw no-compensation downstream evaluation finished on 2026-05-22 for
+`opt-2.7b`, seed `3025`, 20 candidates, using formal `lm-eval-harness` on
+`piqa`, `hellaswag`, `winogrande`, `arc_easy`, `arc_challenge`, and `boolq`:
+
+| Scope | Metric | Value |
+| --- | --- | --- |
+| all candidates | `Pearson(S35,avg_pruned_score)` | `-0.10952013151926386` |
+| all candidates | `Spearman(S35,avg_pruned_score)` | `0.03837472869634838` |
+| all candidates | `partial_corr(S35,avg_pruned_score|L30_raw)` | `-0.18791160797431497` |
+| top8 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.14316636512435285` |
+| top13 by `L30_raw` | `partial_corr(S35,avg_pruned_score|L30_raw)` | `0.25121220430950486` |
+
+Review interpretation: P2 is weak/mixed. Endpoint-close subsets show a mild
+positive relation between `S35` and raw downstream score, but the all-candidate
+controlled relation is negative. Do not present P2 as proof that stress predicts
+downstream retention; use it as a guardrail/sanity check only.
+
 ## Reviewed Artifacts
 
 - Runbook and smoke-test summary: `docs/PROJECT_PLAN.md`

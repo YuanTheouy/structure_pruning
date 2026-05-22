@@ -276,8 +276,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-echo "Downstream execution is gated. Re-run with RUN_DOWNSTREAM_NOW=true to launch shards."
 if [[ "${RUN_DOWNSTREAM_NOW:-false}" != "true" ]]; then
+  echo "Downstream execution is gated. Re-run with RUN_DOWNSTREAM_NOW=true to launch shards."
   exit 0
 fi
 
