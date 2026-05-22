@@ -289,6 +289,7 @@ starting periodic PAS/RPVS.
 | Claim 1: `S35` predicts cross-budget regret | P0 positive on seed `3025` after controlling `L30` | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
 | Claim 2: `S35` predicts recovery quality | P1 mixed/weak on seed `3025`; do not claim PAS improves recovery | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
 | Claim 3: `S35` predicts raw downstream retention beyond endpoint PPL | P2 completed; evidence is weak/mixed, not a strong downstream claim | `/workspace/ckpts/pas_stress_recovery/downstream_analysis_opt27b_seed3025.csv` |
+| Claim 4: local probes `S3025/S3050` provide a downstream@30 selection rule | P0 selection-level analysis is mixed/ambiguous; local probes improve over endpoint in some `top_m` scopes but fail the controlled-signal gate | `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.csv` |
 
 P0 command sequence:
 
@@ -518,6 +519,45 @@ P2 reading: downstream retention does not currently support a strong claim that
 inside endpoint-close subsets and is mild. Keep the manuscript anchored on P0
 controlled cross-budget robustness; mention P2, if at all, as an exploratory
 capability-retention sanity check rather than a headline downstream result.
+
+PAS-local downstream selection P0, recorded 2026-05-22:
+
+Artifacts:
+
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.csv`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.md`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.csv`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.md`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_manifest.json`
+
+Selection-level highlights:
+
+| Scope | FF-Endpoint | PAS-S30.25 | PAS-S30.50 | PAS-S35 | Reading |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=2` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Local probes collapse to endpoint. |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | Local probes improve over endpoint; S35 matches downstream oracle. |
+| `top_m=8` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | Local probes improve over endpoint; S30.50 is best among non-oracles. |
+| `top_m=13` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | Same pattern as top-8. |
+| `epsilon=0.02/0.05` | `0.343333` | `0.343333` | `0.343333` | `0.343333` | Scope size is 1, so no selection distinction. |
+| `epsilon=0.10` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Local probes still collapse to endpoint. |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | Slope rules pick the same negative-slope outlier without endpoint scoping. |
+
+Correlation gate:
+
+| Metric | Value | Reading |
+| --- | --- | --- |
+| `partial_corr(S3025,avg_pruned_score|L30)` | `0.217310` | Wrong sign for a local-fragility downstream story if higher slope should imply lower score. |
+| `partial_corr(S3050,avg_pruned_score|L30)` | `-0.007190` | Essentially no controlled downstream relation. |
+| `partial_corr(S35,avg_pruned_score|L30)` | `-0.200453` | S35 also does not explain downstream@30 globally. |
+| `partial_corr(S35,L40|L30)` | `0.782805` | S35 remains a strong stricter-budget stress signal. |
+| `partial_corr(S35,Regret40|L30)` | `0.782805` | Same stress-regret signal. |
+
+PAS-local reading: do not claim that `S3025/S3050` predict downstream@30 or
+establish local-flatness generalization. The selection-level result is
+interesting but not decisive: local probes beat endpoint in several `top_m`
+scopes, yet the controlled local-slope/downstream relation is weak or unstable.
+If one more cheap PPL-only check is needed, run the optional `S31` probe before
+making any local-PAS downstream statement.
 
 P4 one-more-setting command slot:
 

@@ -1057,6 +1057,53 @@ controlled relation is negative. Dense baseline scores were not supplied, so
 compiled-checkpoint downstream score. Keep the core paper claim on P0
 cross-budget stress.
 
+### PAS-Local Selection Downstream P0
+
+New task from `docs/PAS_LOCAL_SELECTION_DOWNSTREAM_TASK.md`: test local-probe
+selection rules separately from old `PAS-S35`. No new model evaluation was
+required; the analysis joins the existing local-delta PPL table with existing
+downstream@30 and stress artifacts.
+
+Observed P0 artifacts, recorded 2026-05-22:
+
+```text
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_manifest.json
+```
+
+Selection-level summary:
+
+| Scope | FF-Endpoint | PAS-S30.25 | PAS-S30.50 | PAS-S35 | Status |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=2` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | local probes collapse to endpoint |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | local probes improve over endpoint |
+| `top_m=8` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | local probes improve over endpoint |
+| `top_m=13` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | local probes improve over endpoint |
+| `epsilon=0.02/0.05` | `0.343333` | `0.343333` | `0.343333` | `0.343333` | scope size is 1 |
+| `epsilon=0.10` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | local probes collapse to endpoint |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | slope rules pick the same negative-slope outlier |
+
+Signal summary:
+
+```text
+partial_corr(S3025, avg_pruned_score | L30) =  0.217310
+partial_corr(S3050, avg_pruned_score | L30) = -0.007190
+partial_corr(S35,   avg_pruned_score | L30) = -0.200453
+partial_corr(S35,   L40              | L30) =  0.782805
+partial_corr(S35,   Regret40         | L30) =  0.782805
+```
+
+P0 status: mixed/ambiguous, not positive for a local-PAS downstream claim.
+`PAS-S30.25`/`PAS-S30.50` can select better downstream@30 candidates than
+FF-Endpoint in several `top_m` scopes, but the controlled local-slope relation
+with downstream@30 is weak, unstable, or opposite the local-fragility
+interpretation. Keep SAM/flatness as motivation only. Optional next cheap check:
+run `S31` only if the team wants to resolve this ambiguity; do not run new
+downstream tasks first.
+
 Optional figures after P0/P1:
 
 ```bash

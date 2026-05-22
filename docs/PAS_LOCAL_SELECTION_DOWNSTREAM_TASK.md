@@ -154,6 +154,51 @@ local_signal_correlation.md
 local_selection_manifest.json
 ```
 
+### Observed P0 Result
+
+Recorded on 2026-05-22 for `OPT-2.7B` / `WikiText-2` / seed `3025`.
+
+Artifacts:
+
+```text
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_downstream_table.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_signal_correlation.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_analysis/local_selection_manifest.json
+```
+
+Selection-level observations:
+
+| Scope | FF-Endpoint downstream | PAS-S30.25 downstream | PAS-S30.50 downstream | PAS-S35 downstream | Reading |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=2` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Tight top-2 scope: local probes collapse to endpoint; S35 selects the downstream/L40 oracle candidate. |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | Local probes improve over endpoint, but S35 matches the downstream oracle. |
+| `top_m=8` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | Local probes improve over endpoint, with S30.50 better than S30.25/S35 here. |
+| `top_m=13` | `0.343333` | `0.395000` | `0.426667` | `0.401667` | Same pattern as top-8. |
+| `epsilon=0.02` | `0.343333` | `0.343333` | `0.343333` | `0.343333` | Scope size is 1, so no selection difference. |
+| `epsilon=0.05` | `0.343333` | `0.343333` | `0.343333` | `0.343333` | Scope size is 1, so no selection difference. |
+| `epsilon=0.10` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Local probes still collapse to endpoint; S35 selects the stress/downstream oracle candidate. |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | Without an endpoint-compatible scope, all slope rules select the same negative-slope outlier. |
+
+Correlation observations:
+
+| Scope | Metric | Value | Reading |
+| --- | --- | --- | --- |
+| all candidates | `partial_corr(S3025,avg_pruned_score|L30)` | `0.217310` | Wrong sign for a local-fragility story if higher slope means worse downstream. |
+| all candidates | `partial_corr(S3050,avg_pruned_score|L30)` | `-0.007190` | Essentially no controlled downstream relation. |
+| all candidates | `partial_corr(S35,avg_pruned_score|L30)` | `-0.200453` | S35 also does not explain downstream@30 globally. |
+| all candidates | `partial_corr(S35,L40|L30)` | `0.782805` | S35 remains a strong stricter-budget stress signal. |
+| all candidates | `partial_corr(S35,Regret40|L30)` | `0.782805` | Same stress-regret signal. |
+
+Gate result: this is **mixed/ambiguous**, not positive for a
+local-PAS/downstream claim. The local rules do select better-than-endpoint
+downstream candidates in several `top_m` endpoint-compatible scopes, but the
+corresponding controlled local-slope/downstream relation is weak, unstable, or
+opposite the intended local-flatness direction. Do not claim local PAS predicts
+downstream@30 from `S3025/S3050`. At most, this motivates an optional `S31`
+probe if one more cheap PPL-only check is desired.
+
 ## P1: Optional L31 Probe
 
 Only run this if P0 suggests S3025/S3050 are promising or ambiguous.
