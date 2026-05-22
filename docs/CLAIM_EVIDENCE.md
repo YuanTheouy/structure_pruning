@@ -287,8 +287,8 @@ starting periodic PAS/RPVS.
 | Claim | Status | Required artifact |
 | --- | --- | --- |
 | Claim 1: `S35` predicts cross-budget regret | P0 positive on seed `3025` after controlling `L30` | `/workspace/ckpts/pas_stress_recovery/stress_correlation_opt27b.csv` |
-| Claim 2: `S35` predicts recovery quality | pending | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
-| Claim 3: `S35` predicts downstream retention | pending | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
+| Claim 2: `S35` predicts recovery quality | P1 mixed/weak on seed `3025`; do not claim PAS improves recovery | `/workspace/ckpts/pas_stress_recovery/recovery_table_opt27b_seed3025.csv` |
+| Claim 3: `S35` predicts downstream retention | gated/exploratory only unless a stronger recovery protocol passes | `/workspace/ckpts/pas_stress_recovery/downstream_retention_opt27b.csv` |
 
 P0 command sequence:
 
@@ -409,10 +409,28 @@ structurally pruned without ridge reconstruction because the old OPT head-recon
 path can leave `out_proj` dimensions inconsistent; FFN modules receive the same
 ridge recovery protocol for every candidate.
 
-Interpretation guardrail: if P0 or P1 fails, do not claim PAS improves
-recovery and do not start RPVS as a rescue experiment.
+P1 observed result, recorded 2026-05-22:
 
-P2 downstream preparation, gated until P1 passes:
+| Metric | Value | Interpretation |
+| --- | --- | --- |
+| `Pearson(S35,L30_recovered)` | `-0.3160383686607729` | Weak negative raw relation: higher local stress does not predict worse recovered loss in this protocol. |
+| `Spearman(S35,L30_recovered)` | `-0.32967032967032966` | Same weak negative rank-level relation. |
+| `Pearson(S35,RecoveryGain)` | `0.22642765265435086` | Weak positive recovery-gain relation, not strong enough for a recovery claim. |
+| `Spearman(S35,RecoveryGain)` | `0.12087912087912088` | Very weak rank-level recovery-gain relation. |
+| `linear_regression:L30_recovered~L30_raw+S35` | `beta_L30_raw=1.258278753057216`, `beta_S35=-0.11458148956473668`, `R2=0.8668727669534482` | After controlling raw endpoint loss, `S35` has a small negative coefficient for recovered loss under FFN-only ridge recovery. |
+
+P1 reading: this is not a clean pass for "local stress predicts worse
+post-recovery quality". The result is mixed: `S35` remains related to recovery
+behavior, but the observed direction under `ffn_only_ridge_reconstruction`
+leans toward greater recovery opportunity rather than unrecoverable fragility.
+Therefore the manuscript may use P0 for controlled cross-budget stress, but
+must not claim PAS improves or predicts recovery quality from this P1 alone.
+
+Interpretation guardrail: because P1 is mixed/weak, do not claim PAS improves
+recovery and do not start RPVS as a rescue experiment. P2 downstream may be run
+only as exploratory retention diagnostics, not as a proof that P1 passed.
+
+P2 downstream preparation, now exploratory/gated after mixed P1:
 
 ```bash
 cd /workspace/structure_pruning

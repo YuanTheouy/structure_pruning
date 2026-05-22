@@ -61,6 +61,11 @@ same sample count, and the same selected priority-vector candidates.
   `Regret_h = 0.6401`.
 - The next priority is not RPVS. First prove whether local stress `S35`
   predicts cross-budget regret and same-protocol recovery quality.
+- Follow-up P1 recovery on 2026-05-22 was mixed/weak under
+  `ffn_only_ridge_reconstruction`: `Pearson(S35,L30_recovered)=-0.3160`,
+  `Pearson(S35,RecoveryGain)=0.2264`, and
+  `L30_recovered~L30_raw+S35` gave `beta_S35=-0.1146`.
+  Do not claim PAS improves recovery from this evidence.
 
 ## Next Evidence Gate
 
@@ -69,5 +74,7 @@ Use `docs/PAS_STRESS_RECOVERY_EVIDENCE_2026_05_21.md` as the active plan:
 1. P0: candidate-level `L30/L35/L40`, `S35`, `Regret40`, `Delta40`, plus
    correlation and partial correlation controlling `L30`.
 2. P1: fixed recovery subset with identical reconstruction/recovery protocol
-   for all candidates.
-3. P2: downstream retention only if P0/P1 are positive.
+   for all candidates. Completed with mixed/weak recovery evidence; keep as a
+   negative/guardrail result unless a stronger recovery protocol is later run.
+3. P2: downstream retention only as exploratory diagnostics after the current
+   mixed P1, not as proof that PAS improves recovery.

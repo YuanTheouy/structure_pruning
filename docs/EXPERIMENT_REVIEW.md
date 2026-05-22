@@ -60,6 +60,24 @@ Review interpretation: P0 passes the intended controlled-stability test. Raw
 `S35 -> Regret40 | L30` are strong. Proceed to P1 same-protocol recovery before
 making any recovery claim.
 
+P1 same-protocol recovery finished on 2026-05-22 for `opt-2.7b`, seed `3025`,
+13 fixed-subset candidates, using `ffn_only_ridge_reconstruction`:
+
+| Metric | Value |
+| --- | --- |
+| `Pearson(S35,L30_recovered)` | `-0.3160383686607729` |
+| `Spearman(S35,L30_recovered)` | `-0.32967032967032966` |
+| `Pearson(S35,RecoveryGain)` | `0.22642765265435086` |
+| `Spearman(S35,RecoveryGain)` | `0.12087912087912088` |
+| `L30_recovered~L30_raw+S35` | `beta_L30_raw=1.258278753057216`, `beta_S35=-0.11458148956473668`, `R2=0.8668727669534482` |
+
+Review interpretation: P1 is mixed/weak, not a clean pass for a recovery
+claim. The stress feature does not predict worse recovered PPL under this
+protocol; if anything, the controlled coefficient is slightly negative. Keep
+the paper claim anchored on P0 cross-budget stress. Any downstream task run
+after this point should be labeled exploratory unless a stronger recovery
+protocol is tested and passes.
+
 ## Reviewed Artifacts
 
 - Runbook and smoke-test summary: `docs/PROJECT_PLAN.md`

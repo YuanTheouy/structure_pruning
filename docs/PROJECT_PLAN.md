@@ -937,8 +937,27 @@ but ridge recovery is applied only to FFN modules. This avoids the legacy OPT
 head-reconstruction shape mismatch while keeping one identical recovery
 protocol for every candidate.
 
-P2 downstream task retention is prepared but gated until P1 passes. Generate
-the commands first:
+Observed P1 result, recorded 2026-05-22:
+
+```text
+Pearson(S35,L30_recovered)       = -0.3160383686607729
+Spearman(S35,L30_recovered)      = -0.32967032967032966
+Pearson(S35,RecoveryGain)        =  0.22642765265435086
+Spearman(S35,RecoveryGain)       =  0.12087912087912088
+L30_recovered ~ L30_raw + S35    = beta_L30_raw 1.258278753057216,
+                                   beta_S35 -0.11458148956473668,
+                                   R2 0.8668727669534482
+n = 13, protocol = ffn_only_ridge_reconstruction
+```
+
+P1 status: mixed/weak, not a clean pass for a recovery-quality claim. The data
+does not support "higher `S35` predicts worse recovered PPL" under this
+FFN-only ridge protocol. It weakly suggests `S35` is related to recovery
+behavior, but the controlled coefficient is negative for recovered loss.
+Therefore do not claim PAS improves recovery from P1.
+
+P2 downstream task retention is prepared but should be treated as exploratory
+unless a stronger recovery protocol later passes. Generate the commands first:
 
 ```bash
 cd /workspace/structure_pruning
@@ -966,7 +985,8 @@ bash scripts/pas_run_downstream_batch.sh \
   --dry-run
 ```
 
-If P1 passes, execute the same command with:
+If downstream diagnostics are still desired after this mixed P1, execute the
+same command with:
 
 ```bash
 RUN_DOWNSTREAM_NOW=true bash scripts/pas_run_downstream_batch.sh ...
