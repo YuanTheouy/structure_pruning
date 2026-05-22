@@ -201,6 +201,7 @@ for index, row in enumerate(recovery_rows):
         "--gpu_id=0",
         "--enable_downstream=true",
         "--delayed_downstream_eval",
+        "--downstream_require_lmeval",
         f"--downstream_output={downstream_output}",
         f"--downstream_tasks={tasks}",
         f"--downstream_limit={limit}",

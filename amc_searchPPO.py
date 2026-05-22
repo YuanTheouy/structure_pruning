@@ -178,6 +178,8 @@ def parse_args():
                         help='Optional lm-eval sample limit per task; 0 means full task')
     parser.add_argument('--downstream_batch_size', default=4, type=int,
                         help='Batch size for downstream lm-eval wrapper')
+    parser.add_argument('--downstream_require_lmeval', action='store_true',
+                        help='Fail downstream evaluation instead of falling back to lightweight evaluator')
 
     parser.add_argument('--learning_epoch', default=10, type=int, help='')
     parser.add_argument('--tau', default=0.01, type=float, help='moving average for target network')
@@ -761,6 +763,8 @@ def run_compile_best(env, args):
                 print("=> Post-compile downstream task evaluation completed with warnings")
         except Exception as exc:
             print(f"=> WARNING: Post-compile downstream evaluation failed: {str(exc)}")
+            if getattr(args, "downstream_require_lmeval", False):
+                raise
         if args.downstream_output:
             dump_json(args.downstream_output, {
                 "candidate_id": candidate_id,

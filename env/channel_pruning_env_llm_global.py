@@ -104,6 +104,20 @@ def _load_lmeval():
     if LIGHTWEIGHT_EVAL_AVAILABLE: return "lightweight"
 
     try:
+        import lm_eval as _lm_eval
+        from lm_eval import evaluator as _evaluator
+        from lm_eval.models.huggingface import HFLM as _HFLM
+
+        lm_eval = _lm_eval
+        evaluator = _evaluator
+        HFLM = _HFLM
+        LMEVAL_AVAILABLE = True
+        print("=> lm-eval-harness imported directly.")
+        return "full"
+    except Exception as direct_exception:
+        print(f"=> Direct lm-eval import failed, trying offline compatibility loader: {direct_exception}")
+
+    try:
         import evaluate as hf_evaluate
         import os
         import sys
@@ -1707,6 +1721,12 @@ class ChannelPruningEnv:
         """
         # 尝试加载评估框架
         eval_type = _load_lmeval()
+
+        if getattr(self.args, "downstream_require_lmeval", False) and eval_type != "full":
+            raise RuntimeError(
+                "lm-eval-harness is required for this downstream run, "
+                f"but loader returned {eval_type!r}."
+            )
         
         if eval_type == "none":
             print("=> INFO: No evaluation framework available")
@@ -1728,6 +1748,8 @@ class ChannelPruningEnv:
                 
         except Exception as e:
             print(f"=> WARNING: Downstream evaluation failed: {str(e)}")
+            if getattr(self.args, "downstream_require_lmeval", False):
+                raise
             print("=> Trying backup generation test...")
             
             # 备选方案：进行简单的文本生成测试
