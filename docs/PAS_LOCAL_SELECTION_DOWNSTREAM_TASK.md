@@ -309,6 +309,106 @@ experiment should evaluate a strictly nested projector path. Do not run more
 downstream tasks before that; the current-projector local probes have reached
 their evidential limit.
 
+## P2: Strictly Nested Projector PPL Probe
+
+This is a projector/evaluation change only. Do not retrain FastForward
+candidates.
+
+The historical projector evaluates every sparsity independently and may expand
+modules back toward the global budget. For a local-flatness test, use:
+
+```text
+--projection-mode nested_from_base
+--projection-base-sparsity 0.3000
+```
+
+This first projects the candidate at `30%`, then walks stricter budgets in
+ascending sparsity and caps each module by the previous projection's preserved
+dimension. It can redistribute within the surviving `30%` structure to hit the
+next budget, but it cannot re-add heads/channels/neurons removed at an earlier
+point.
+
+Run the smallest useful nested probe first:
+
+```bash
+cd /workspace/structure_pruning
+git pull --ff-only origin main
+
+bash scripts/pas_run_local_probe_multigpu.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --probe-sparsity 0.3025 \
+  --delta 0.0025 \
+  --base-sparsity 0.3000 \
+  --projection-mode nested_from_base \
+  --output-dir /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested \
+  --gpu-ids "0 1 2 3 4 5 6 7" \
+  --num-samples 64 \
+  --batch-size 8 \
+  --candidate-top-k 20
+```
+
+Materialize the local-slope table:
+
+```bash
+OUT=/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested
+
+python - <<'PY'
+import csv
+from pathlib import Path
+
+out = Path("/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested")
+rows = []
+with (out / "probe_results.csv").open("r", encoding="utf-8") as handle:
+    for r in csv.DictReader(handle):
+        L30 = float(r["ell_minus"])
+        L3025 = float(r["ell_0"])
+        L3050 = float(r["ell_plus"])
+        rows.append({
+            "candidate_id": r["candidate_id"],
+            "L30": L30,
+            "L3025": L3025,
+            "L3050": L3050,
+            "S3025": L3025 - L30,
+            "S3050": L3050 - L30,
+            "PPL30": r.get("ppl_minus", ""),
+            "PPL3025": r.get("ppl_0", ""),
+            "PPL3050": r.get("ppl_plus", ""),
+            "projection_mode": r.get("projection_mode", ""),
+            "projection_base_sparsity": r.get("projection_base_sparsity", ""),
+        })
+
+with (out / "local_delta_scores.csv").open("w", newline="", encoding="utf-8") as handle:
+    writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+print(f"Wrote {out / 'local_delta_scores.csv'}")
+PY
+```
+
+Then rerun the existing analysis stack against the nested table:
+
+```bash
+python scripts/pas_analyze_local_delta_probe.py \
+  --local-delta-csv /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested/local_delta_scores.csv \
+  --stress-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --downstream-summary /workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested
+
+python scripts/pas_analyze_local_selection_downstream.py \
+  --local-delta-table /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested/local_delta_scores.csv \
+  --downstream-summary /workspace/ckpts/pas_stress_recovery/downstream_candidate_summary_opt27b_seed3025.csv \
+  --stress-table /workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv \
+  --output-dir /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested_analysis
+```
+
+If `S3025/S3050` remain negative or uncorrelated under this strict path, stop
+the local-flatness rescue. If the nested path changes the conclusion, run the
+same command with `--probe-sparsity 0.3050 --delta 0.0050` to get nested `S31`.
+
 ## Server Commands
 
 P0 analysis:

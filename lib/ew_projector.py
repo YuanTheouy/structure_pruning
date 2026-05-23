@@ -94,6 +94,17 @@ def compute_policy_budget(policy, target_sparsity, module_costs):
     }
 
 
+def policy_to_dims(policy, dim_list):
+    """Convert preserve ratios to integer preserved dimensions."""
+
+    dims = []
+    for ratio, dim in zip(policy, dim_list):
+        d_prime = int(np.around(float(ratio) * int(dim)))
+        d_prime = max(1, min(int(dim), d_prime))
+        dims.append(d_prime)
+    return dims
+
+
 def project_score_to_policy(
     score_vector,
     target_sparsity=None,
@@ -256,3 +267,256 @@ def project_score_to_policy(
         },
     }
     return result if return_metadata else projected
+
+
+def project_score_to_policy_nested_from_caps(
+    score_vector,
+    target_sparsity,
+    module_costs,
+    *,
+    cap_d_primes,
+    p_min=0.0,
+    p_max=1.0,
+    return_metadata=False,
+    budget_tolerance=1e-3,
+):
+    """Project a score vector with per-module preserve caps.
+
+    This is the strict nested variant used for local-delta PPL probes. The
+    ordinary projector may expand a module up to the scalar ``p_max`` when it
+    needs to hit the global budget. Here the expansion ceiling is the previous
+    stricter-path projection's preserved dimensions, so a later, higher
+    sparsity point can never re-add channels/heads/neurons that the earlier
+    point removed.
+    """
+
+    if module_costs is None:
+        raise ValueError("module_costs is required")
+
+    actions = np.abs(_as_float_array(score_vector, "score_vector"))
+    costs, norm_costs, dim_list, channel_round, cost_type = _extract_costs(module_costs)
+    if dim_list is None:
+        raise ValueError("nested projection requires module_costs['dim_list']")
+    if actions.shape != costs.shape:
+        raise ValueError(f"A has length {len(actions)}, but module_costs has length {len(costs)}")
+
+    cap_d_array = _as_float_array(cap_d_primes, "cap_d_primes")
+    if cap_d_array.shape != costs.shape:
+        raise ValueError("cap_d_primes must have the same length as module_costs")
+
+    p_min = float(p_min)
+    p_max = float(p_max)
+    target_sparsity = float(np.clip(target_sparsity, 0.0, 1.0))
+    target_preserve = 1.0 - target_sparsity
+
+    cap_d_array = np.maximum(1.0, np.minimum(cap_d_array, dim_list))
+    per_module_max = np.minimum(p_max, cap_d_array / dim_list)
+    actions = np.minimum(np.clip(actions, p_min, p_max), per_module_max)
+
+    def cost_parts(idx):
+        if cost_type == "para":
+            return costs[idx] - norm_costs[idx], norm_costs[idx]
+        return costs[idx], 0.0
+
+    def get_computation(ratios):
+        total = 0.0
+        for i, ratio in enumerate(ratios):
+            effective_cost, fixed_cost = cost_parts(i)
+            total += float(ratio) * effective_cost + fixed_cost
+        return total
+
+    target_computation = target_preserve * float(np.sum(costs))
+    current_computation = get_computation(actions)
+
+    if current_computation < target_computation:
+        deficit = target_computation - current_computation
+        unsaturated = [i for i, ratio in enumerate(actions) if ratio < per_module_max[i]]
+        headrooms = []
+        for idx in unsaturated:
+            effective_cost, _ = cost_parts(idx)
+            headrooms.append((per_module_max[idx] - actions[idx]) * effective_cost)
+
+        total_headroom = float(np.sum(headrooms))
+        if total_headroom > 1e-6:
+            for local_idx, original_idx in enumerate(unsaturated):
+                effective_cost, _ = cost_parts(original_idx)
+                if effective_cost > 1e-6:
+                    actions[original_idx] += deficit * (headrooms[local_idx] / total_headroom) / effective_cost
+            actions = np.minimum(np.clip(actions, p_min, p_max), per_module_max)
+
+    elif current_computation > target_computation:
+        for idx in range(len(actions)):
+            other_comp = 0.0
+            this_comp = 0.0
+            for i in range(len(actions)):
+                effective_cost, fixed_cost = cost_parts(i)
+                if i == idx:
+                    this_comp += costs[i] if cost_type == "para" else effective_cost
+                elif i < idx:
+                    other_comp += actions[i] * effective_cost + fixed_cost
+                else:
+                    other_comp += p_min * effective_cost + fixed_cost
+
+            if this_comp > 1e-6:
+                max_preserve_ratio = (target_computation - other_comp) / this_comp
+                actions[idx] = np.minimum(actions[idx], max_preserve_ratio)
+                actions[idx] = np.maximum(actions[idx], p_min)
+                actions[idx] = np.minimum(actions[idx], per_module_max[idx])
+
+    d_primes = [max(1, int(np.around(ratio * dim))) for ratio, dim in zip(actions, dim_list)]
+    if channel_round > 0:
+        d_primes = [
+            min(int(cap_d), int(dim), int(np.ceil(d_prime / channel_round) * channel_round))
+            for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_array)
+        ]
+    else:
+        d_primes = [
+            min(int(cap_d), int(dim), int(d_prime))
+            for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_array)
+        ]
+
+    rounded = [d_prime / dim if dim > 0 else 0.0 for d_prime, dim in zip(d_primes, dim_list)]
+    overshoot = get_computation(rounded) - target_computation
+
+    if overshoot > 0:
+        for idx in range(len(rounded) - 1, -1, -1):
+            if overshoot <= 0:
+                break
+            if dim_list[idx] <= 0 or channel_round <= 0:
+                continue
+
+            cost_per_channel = costs[idx] / dim_list[idx]
+            cost_per_round_step = cost_per_channel * channel_round
+            min_d_prime = max(1, int(np.around(p_min * dim_list[idx])))
+
+            while d_primes[idx] > min_d_prime and overshoot > 0:
+                d_primes[idx] -= channel_round
+                overshoot -= cost_per_round_step
+
+    projected = [d_prime / dim if dim > 0 else 0.0 for d_prime, dim in zip(d_primes, dim_list)]
+    projected = list(np.minimum(np.clip(projected, p_min, p_max), per_module_max))
+    budget = compute_policy_budget(projected, target_sparsity, module_costs)
+    result = {
+        "policy": projected,
+        "target_sparsity": target_sparsity,
+        "actual_sparsity": budget["actual_sparsity"],
+        "budget_error": budget["budget_error"],
+        "relative_budget_error": budget["relative_budget_error"],
+        "module_costs": module_costs,
+        "p_min": p_min,
+        "p_max": p_max,
+        "metadata": {
+            **budget,
+            "projection_mode": "nested_from_base",
+            "per_module_caps_enforced": True,
+            "cap_d_primes": [int(value) for value in cap_d_array],
+            "budget_tolerance": float(budget_tolerance),
+            "within_budget_tolerance": abs(budget["relative_budget_error"]) <= budget_tolerance,
+        },
+    }
+    return result if return_metadata else projected
+
+
+def project_score_path_to_policies(
+    score_vector,
+    sparsities,
+    *,
+    module_costs,
+    p_min=0.0,
+    p_max=1.0,
+    projection_mode="current",
+    base_sparsity=None,
+    return_metadata=True,
+):
+    """Project one score vector over a sparsity path.
+
+    ``projection_mode='current'`` reproduces the historical independent
+    projection at each sparsity. ``projection_mode='nested_from_base'`` uses the
+    independent base projection first, then walks stricter sparsities in order
+    while capping every step by the previous step's preserved dimensions.
+    """
+
+    requested = [float(np.clip(value, 0.0, 1.0)) for value in sparsities]
+    if not requested:
+        raise ValueError("sparsities must contain at least one value")
+
+    projection_mode = str(projection_mode)
+    if projection_mode not in {"current", "nested_from_base"}:
+        raise ValueError(f"Unsupported projection_mode: {projection_mode}")
+
+    if projection_mode == "current":
+        return {
+            sigma: project_score_to_policy(
+                score_vector,
+                target_sparsity=sigma,
+                module_costs=module_costs,
+                p_min=p_min,
+                p_max=p_max,
+                return_metadata=return_metadata,
+            )
+            for sigma in requested
+        }
+
+    _, _, dim_list, _, _ = _extract_costs(module_costs)
+    if dim_list is None:
+        raise ValueError("nested_from_base projection requires module_costs['dim_list']")
+
+    base = float(np.clip(min(requested) if base_sparsity is None else base_sparsity, 0.0, 1.0))
+    path = sorted(set(requested + [base]))
+    projections = {}
+
+    previous_cap_d = None
+    previous_sigma = None
+    for sigma in path:
+        if sigma <= base:
+            projection = project_score_to_policy(
+                score_vector,
+                target_sparsity=sigma,
+                module_costs=module_costs,
+                p_min=p_min,
+                p_max=p_max,
+                return_metadata=True,
+            )
+            projection["metadata"]["projection_mode"] = "nested_from_base"
+            projection["metadata"]["base_sparsity"] = base
+            projection["metadata"]["cap_source_sparsity"] = None
+            projections[sigma] = projection
+            if sigma == base:
+                previous_cap_d = policy_to_dims(projection["policy"], dim_list)
+                previous_sigma = sigma
+            continue
+
+        if previous_cap_d is None:
+            base_projection = project_score_to_policy(
+                score_vector,
+                target_sparsity=base,
+                module_costs=module_costs,
+                p_min=p_min,
+                p_max=p_max,
+                return_metadata=True,
+            )
+            base_projection["metadata"]["projection_mode"] = "nested_from_base"
+            base_projection["metadata"]["base_sparsity"] = base
+            base_projection["metadata"]["cap_source_sparsity"] = None
+            projections[base] = base_projection
+            previous_cap_d = policy_to_dims(base_projection["policy"], dim_list)
+            previous_sigma = base
+
+        projection = project_score_to_policy_nested_from_caps(
+            score_vector,
+            sigma,
+            module_costs,
+            cap_d_primes=previous_cap_d,
+            p_min=p_min,
+            p_max=p_max,
+            return_metadata=True,
+        )
+        projection["metadata"]["base_sparsity"] = base
+        projection["metadata"]["cap_source_sparsity"] = previous_sigma
+        projections[sigma] = projection
+        previous_cap_d = policy_to_dims(projection["policy"], dim_list)
+        previous_sigma = sigma
+
+    if return_metadata:
+        return {sigma: projections[sigma] for sigma in requested}
+    return {sigma: projections[sigma]["policy"] for sigma in requested}

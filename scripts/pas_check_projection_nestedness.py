@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
 import shlex
 import sys
 import time
@@ -23,11 +22,10 @@ if str(ROOT) not in sys.path:
 from amc_searchPPO import (  # noqa: E402
     build_env_module_costs,
     load_candidate_score,
-    project_candidate_score_with_metadata,
 )
 from env.channel_pruning_env_llm_global import ChannelPruningEnv  # noqa: E402
 from lib.ew_candidates import read_jsonl  # noqa: E402
-from lib.ew_projector import compute_policy_budget  # noqa: E402
+from lib.ew_projector import project_score_path_to_policies  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,136 +142,6 @@ def policy_to_dims(policy: list[float], dim_list: list[int]) -> list[int]:
     return dims
 
 
-def extract_cost_bundle(module_costs: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, str]:
-    costs = np.asarray(module_costs["costs"], dtype=np.float64)
-    norm_raw = module_costs.get("norm_costs")
-    norm_costs = np.zeros_like(costs) if norm_raw is None else np.asarray(norm_raw, dtype=np.float64)
-    dim_list = np.asarray(module_costs["dim_list"], dtype=np.float64)
-    channel_round = int(module_costs.get("channel_round", 1))
-    cost_type = str(module_costs.get("cost_type", "para"))
-    return costs, norm_costs, dim_list, channel_round, cost_type
-
-
-def nested_project_score_to_policy(
-    score_vector: np.ndarray,
-    target_sparsity: float,
-    module_costs: dict[str, Any],
-    *,
-    cap_d_primes: list[int],
-    p_min: float,
-    p_max: float,
-) -> dict[str, Any]:
-    """Project with per-module caps from an earlier nested projection.
-
-    This is intentionally a repair/ablation projector, not the current PAS
-    projector. It mirrors the current budget correction while replacing the
-    scalar upper bound with per-module caps so stricter projections cannot
-    preserve dimensions outside the previous nested structure.
-    """
-
-    actions = np.abs(np.asarray(score_vector, dtype=np.float64))
-    costs, norm_costs, dim_list, channel_round, cost_type = extract_cost_bundle(module_costs)
-    if actions.shape != costs.shape:
-        raise ValueError(f"score length {len(actions)} does not match module count {len(costs)}")
-
-    target_sparsity = float(np.clip(target_sparsity, 0.0, 1.0))
-    p_min = float(p_min)
-    p_max = float(p_max)
-    cap_d_array = np.asarray(cap_d_primes, dtype=np.float64)
-    per_module_max = np.minimum(p_max, cap_d_array / dim_list)
-    actions = np.minimum(np.clip(actions, p_min, p_max), per_module_max)
-
-    def cost_parts(idx: int) -> tuple[float, float]:
-        if cost_type == "para":
-            return float(costs[idx] - norm_costs[idx]), float(norm_costs[idx])
-        return float(costs[idx]), 0.0
-
-    def get_computation(ratios: np.ndarray | list[float]) -> float:
-        total = 0.0
-        for i, ratio in enumerate(ratios):
-            effective_cost, fixed_cost = cost_parts(i)
-            total += float(ratio) * effective_cost + fixed_cost
-        return total
-
-    target_computation = (1.0 - target_sparsity) * float(np.sum(costs))
-    current_computation = get_computation(actions)
-
-    if current_computation < target_computation:
-        deficit = target_computation - current_computation
-        unsaturated = [i for i, ratio in enumerate(actions) if ratio < per_module_max[i]]
-        headrooms = []
-        for idx in unsaturated:
-            effective_cost, _ = cost_parts(idx)
-            headrooms.append((per_module_max[idx] - actions[idx]) * effective_cost)
-        total_headroom = float(np.sum(headrooms))
-        if total_headroom > 1e-6:
-            for local_idx, original_idx in enumerate(unsaturated):
-                effective_cost, _ = cost_parts(original_idx)
-                if effective_cost > 1e-6:
-                    actions[original_idx] += deficit * (headrooms[local_idx] / total_headroom) / effective_cost
-            actions = np.minimum(np.clip(actions, p_min, p_max), per_module_max)
-    elif current_computation > target_computation:
-        for idx in range(len(actions)):
-            other_comp = 0.0
-            this_comp = 0.0
-            for i in range(len(actions)):
-                effective_cost, fixed_cost = cost_parts(i)
-                if i == idx:
-                    this_comp += float(costs[i]) if cost_type == "para" else effective_cost
-                elif i < idx:
-                    other_comp += float(actions[i]) * effective_cost + fixed_cost
-                else:
-                    other_comp += p_min * effective_cost + fixed_cost
-            if this_comp > 1e-6:
-                max_preserve_ratio = (target_computation - other_comp) / this_comp
-                actions[idx] = min(actions[idx], max_preserve_ratio)
-                actions[idx] = max(actions[idx], p_min)
-                actions[idx] = min(actions[idx], per_module_max[idx])
-
-    d_primes = [max(1, int(np.around(ratio * dim))) for ratio, dim in zip(actions, dim_list)]
-    if channel_round > 0:
-        d_primes = [
-            min(int(cap_d), int(dim), int(math.ceil(d_prime / channel_round) * channel_round))
-            for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_primes)
-        ]
-    else:
-        d_primes = [min(int(cap_d), int(dim), int(d_prime)) for d_prime, dim, cap_d in zip(d_primes, dim_list, cap_d_primes)]
-
-    rounded = np.asarray([d_prime / dim if dim > 0 else 0.0 for d_prime, dim in zip(d_primes, dim_list)], dtype=np.float64)
-    overshoot = get_computation(rounded) - target_computation
-    if overshoot > 0:
-        for idx in range(len(rounded) - 1, -1, -1):
-            if overshoot <= 0:
-                break
-            if dim_list[idx] <= 0 or channel_round <= 0:
-                continue
-            cost_per_channel = float(costs[idx] / dim_list[idx])
-            cost_per_round_step = cost_per_channel * channel_round
-            min_d_prime = max(1, int(np.around(p_min * dim_list[idx])))
-            while d_primes[idx] > min_d_prime and overshoot > 0:
-                d_primes[idx] -= channel_round
-                overshoot -= cost_per_round_step
-
-    projected = [d_prime / dim if dim > 0 else 0.0 for d_prime, dim in zip(d_primes, dim_list)]
-    projected = list(np.minimum(np.clip(projected, p_min, p_max), per_module_max))
-    budget = compute_policy_budget(projected, target_sparsity, module_costs)
-    return {
-        "policy": projected,
-        "target_sparsity": target_sparsity,
-        "actual_sparsity": budget["actual_sparsity"],
-        "budget_error": budget["budget_error"],
-        "relative_budget_error": budget["relative_budget_error"],
-        "module_costs": module_costs,
-        "p_min": p_min,
-        "p_max": p_max,
-        "metadata": {
-            **budget,
-            "projection_mode": "nested_from_base",
-            "per_module_caps_enforced": True,
-        },
-    }
-
-
 def build_projections(
     env: ChannelPruningEnv,
     score_vector: np.ndarray,
@@ -283,32 +151,16 @@ def build_projections(
     module_costs: dict[str, Any],
     dim_list: list[int],
 ) -> dict[float, dict[str, Any]]:
-    current = {sigma: project_candidate_score_with_metadata(env, score_vector, sigma) for sigma in sparsities}
-    if projection_mode == "current":
-        return current
-
-    if base_sigma not in current:
-        current[base_sigma] = project_candidate_score_with_metadata(env, score_vector, base_sigma)
-    nested: dict[float, dict[str, Any]] = {}
-    previous_cap_d: list[int] | None = None
-    for sigma in sparsities:
-        if sigma <= base_sigma:
-            nested[sigma] = current[sigma]
-            if sigma == base_sigma:
-                previous_cap_d = policy_to_dims(nested[sigma]["policy"], dim_list)
-        else:
-            if previous_cap_d is None:
-                previous_cap_d = policy_to_dims(current[base_sigma]["policy"], dim_list)
-            nested[sigma] = nested_project_score_to_policy(
-                score_vector,
-                sigma,
-                module_costs,
-                cap_d_primes=previous_cap_d,
-                p_min=env.lbound,
-                p_max=env.rbound,
-            )
-            previous_cap_d = policy_to_dims(nested[sigma]["policy"], dim_list)
-    return nested
+    return project_score_path_to_policies(
+        score_vector,
+        sparsities,
+        module_costs=module_costs,
+        p_min=env.lbound,
+        p_max=env.rbound,
+        projection_mode=projection_mode,
+        base_sparsity=base_sigma,
+        return_metadata=True,
+    )
 
 
 def main() -> int:

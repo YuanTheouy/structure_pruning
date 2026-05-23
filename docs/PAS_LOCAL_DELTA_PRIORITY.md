@@ -169,6 +169,32 @@ the protocol guardrail.
 
 P1 PPL probe should wait until P0 identifies the smallest meaningful delta.
 
+Strict nested follow-up: if current-projector local deltas are ambiguous, rerun
+the PPL probe with the production nested projector path:
+
+```bash
+bash scripts/pas_run_local_probe_multigpu.sh \
+  --model /workspace/Models/opt-2.7b \
+  --model-name opt-2.7b \
+  --dataset wikitext2 \
+  --seed 3025 \
+  --candidate-pool /workspace/ckpts/opt-2.7b/sparsity_0.30/p0_candidates_seed3025/candidates \
+  --probe-sparsity 0.3025 \
+  --delta 0.0025 \
+  --base-sparsity 0.3000 \
+  --projection-mode nested_from_base \
+  --output-dir /workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested \
+  --gpu-ids "0 1 2 3 4 5 6 7" \
+  --num-samples 64 \
+  --batch-size 8 \
+  --candidate-top-k 20
+```
+
+This evaluates `L30/L30.25/L30.50` using one cumulative path from the `30%`
+projection. Later budgets may only preserve dimensions that survived the
+previous budget, so the probe removes the current projector's re-addition
+confound.
+
 ## Interpretation
 
 If small deltas predict downstream@30:

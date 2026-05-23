@@ -22,7 +22,12 @@ from env.weight_pruning_env_llm_global import WeightPruningEnv
 from lib.ppo.ppo.ppo_lstm import MLP, PPO, Actor, Critic, Gaussian, GumbelActor
 from lib.utils import get_output_folder, prGreen, prRed
 from lib.ew_candidates import CandidateRecorder, dump_json, load_json, read_jsonl, safe_model_name
-from lib.ew_projector import compute_policy_budget, make_module_costs, project_score_to_policy
+from lib.ew_projector import (
+    compute_policy_budget,
+    make_module_costs,
+    project_score_path_to_policies,
+    project_score_to_policy,
+)
 from tensorboardX import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForCausalLM,LlamaTokenizer
 from feature_extractor import FeatureOrchestrator  # Use new modularized feature orchestrator
@@ -271,6 +276,12 @@ def parse_args():
                         help='Neighboring-budget delta for Early-Warning probe.')
     parser.add_argument('--probe_sparsity', default=None, type=float,
                         help='Override diagnostic center sparsity. Defaults to each candidate current_sparsity.')
+    parser.add_argument('--projection_mode', '--projection-mode', dest='projection_mode',
+                        default='current', choices=['current', 'nested_from_base'],
+                        help='Projection mode for probe/compile jobs. nested_from_base enforces a monotone sparsity path.')
+    parser.add_argument('--projection_base_sparsity', '--projection-base-sparsity',
+                        dest='projection_base_sparsity', default=None, type=float,
+                        help='Base sparsity for nested_from_base projection. Defaults to the lowest probed sparsity.')
     parser.add_argument('--probe_output', default=None, type=str,
                         help='CSV path for Early-Warning probe results.')
     parser.add_argument('--probe_jsonl_output', default=None, type=str,
@@ -409,6 +420,26 @@ def project_candidate_score_with_metadata(env, score_vector, sparsity):
     )
 
 
+def project_candidate_score_path_with_metadata(
+    env,
+    score_vector,
+    sparsities,
+    *,
+    projection_mode="current",
+    base_sparsity=None,
+):
+    return project_score_path_to_policies(
+        score_vector,
+        sparsities,
+        module_costs=build_env_module_costs(env),
+        p_min=env.lbound,
+        p_max=env.rbound,
+        projection_mode=projection_mode,
+        base_sparsity=base_sparsity,
+        return_metadata=True,
+    )
+
+
 def load_candidate_score(candidate):
     if candidate.get("score_path"):
         return torch.load(candidate["score_path"], map_location="cpu").detach().cpu().numpy()
@@ -491,14 +522,24 @@ def run_probe(env, args):
         )
         score_vector = load_candidate_score(candidate)
 
+        projection_mode = getattr(args, "projection_mode", "current")
+        projection_base_sparsity = getattr(args, "projection_base_sparsity", None)
+        sparsity_points = [
+            ("minus", float(np.clip(center_sparsity - delta, 0.0, 1.0))),
+            ("zero", float(np.clip(center_sparsity, 0.0, 1.0))),
+            ("plus", float(np.clip(center_sparsity + delta, 0.0, 1.0))),
+        ]
+        projections = project_candidate_score_path_with_metadata(
+            env,
+            score_vector,
+            [sparsity for _, sparsity in sparsity_points],
+            projection_mode=projection_mode,
+            base_sparsity=projection_base_sparsity,
+        )
+
         probe_values = {}
-        for tag, sparsity in (
-            ("minus", center_sparsity - delta),
-            ("zero", center_sparsity),
-            ("plus", center_sparsity + delta),
-        ):
-            sparsity = float(np.clip(sparsity, 0.0, 1.0))
-            projection = project_candidate_score_with_metadata(env, score_vector, sparsity)
+        for tag, sparsity in sparsity_points:
+            projection = projections[sparsity]
             policy = projection["policy"]
             policy_path = policy_dir / f"{candidate_id}_{tag}.json"
             write_policy_json(policy_path, candidate_id, policy, sparsity, {"probe_point": tag, "projection": projection})
@@ -579,6 +620,10 @@ def run_probe(env, args):
             "gpu_id": getattr(args, "gpu_id", ""),
             "num_shards": num_shards,
             "shard_id": shard_id,
+            "projection_mode": projection_mode,
+            "projection_base_sparsity": (
+                projection_base_sparsity if projection_base_sparsity is not None else probe_values["minus"]["sparsity"]
+            ),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         rows.append(row)
@@ -720,7 +765,24 @@ def run_compile_best(env, args):
     score_vector = load_candidate_score(candidate)
 
     final_sparsity = float(args.final_sparsity) if args.final_sparsity is not None else 1.0 - args.preserve_ratio
-    final_projection = project_candidate_score_with_metadata(env, score_vector, final_sparsity)
+    projection_mode = getattr(args, "projection_mode", "current")
+    projection_base_sparsity = getattr(args, "projection_base_sparsity", None)
+    if projection_mode == "nested_from_base":
+        base_sparsity = (
+            float(projection_base_sparsity)
+            if projection_base_sparsity is not None
+            else float(candidate.get("current_sparsity", 1.0 - args.preserve_ratio))
+        )
+        final_projection = project_candidate_score_path_with_metadata(
+            env,
+            score_vector,
+            [base_sparsity, final_sparsity],
+            projection_mode=projection_mode,
+            base_sparsity=base_sparsity,
+        )[final_sparsity]
+    else:
+        base_sparsity = projection_base_sparsity
+        final_projection = project_candidate_score_with_metadata(env, score_vector, final_sparsity)
     final_policy = final_projection["policy"]
     final_policy_path = args.final_policy_path or os.path.join(resolve_candidate_dir(args), "final_policy.json")
     write_policy_json(
@@ -728,7 +790,13 @@ def run_compile_best(env, args):
         candidate_id,
         final_policy,
         final_sparsity,
-        {"source_best_candidate": best_path, "selected_mode": best_payload.get("selected_mode")},
+        {
+            "source_best_candidate": best_path,
+            "selected_mode": best_payload.get("selected_mode"),
+            "projection_mode": projection_mode,
+            "projection_base_sparsity": base_sparsity,
+            "projection": final_projection,
+        },
     )
 
     export_path = args.export_path or os.path.join(resolve_candidate_dir(args), "final_static_checkpoint.pth.tar")
@@ -746,6 +814,8 @@ def run_compile_best(env, args):
         "actual_sparsity": final_projection["actual_sparsity"],
         "budget_error": final_projection["budget_error"],
         "relative_budget_error": final_projection["relative_budget_error"],
+        "projection_mode": projection_mode,
+        "projection_base_sparsity": base_sparsity,
         "selected_mode": best_payload.get("selected_mode"),
         "best_candidate_path": best_path,
     })
