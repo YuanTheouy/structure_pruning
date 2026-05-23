@@ -5,6 +5,11 @@ Date: 2026-05-22
 Purpose: test whether the current PAS probe radius is too large for a
 SAM/flatness-style interpretation, without exploding the experiment budget.
 
+Result update: the strict nested OPT-2.7B and OPT-1.3B probes now support a
+finite informative local radius, with `S30.5` acting as the strongest local
+downstream@30 signal and `S35` remaining a larger-radius stress signal. See
+`docs/PAS_INFORMATIVE_LOCAL_RADIUS_FINDING.md`.
+
 ## Current Concern
 
 The existing PAS-Slope uses:
