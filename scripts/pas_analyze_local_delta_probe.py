@@ -195,6 +195,7 @@ def metric_rows(rows: list[dict[str, object]], scope: str, control_key: str) -> 
     predictors = [
         ("S3025", "local_30.25_minus_30"),
         ("S3050", "local_30.50_minus_30"),
+        ("S31", "local_31.00_minus_30"),
         ("S35", "stress_35_minus_30"),
     ]
     targets = [
@@ -230,7 +231,19 @@ def metric_rows(rows: list[dict[str, object]], scope: str, control_key: str) -> 
 
 def normalize_local(row: dict[str, str]) -> dict[str, object]:
     out: dict[str, object] = {"candidate_id": row["candidate_id"]}
-    for key in ("L30", "L3025", "L3050", "S3025", "S3050", "PPL30", "PPL3025", "PPL3050"):
+    for key in (
+        "L30",
+        "L3025",
+        "L3050",
+        "L31",
+        "S3025",
+        "S3050",
+        "S31",
+        "PPL30",
+        "PPL3025",
+        "PPL3050",
+        "PPL31",
+    ):
         out[f"{key}_local" if key == "L30" else key] = row.get(key, "")
     return out
 
@@ -277,7 +290,7 @@ def write_md(path: Path, analysis_rows: list[dict[str, object]], joined_rows: li
         row for row in analysis_rows
         if row.get("scope") == "all_candidates"
         and row.get("target") == "avg_pruned_score"
-        and row.get("predictor") in {"S3025", "S3050"}
+        and row.get("predictor") in {"S3025", "S3050", "S31"}
     ]
     stress_rows = [
         row for row in analysis_rows
@@ -287,7 +300,8 @@ def write_md(path: Path, analysis_rows: list[dict[str, object]], joined_rows: li
     ]
     negative_counts = {
         key: sum(1 for row in joined_rows if (get_float(row, key) is not None and get_float(row, key) < 0))
-        for key in ("S3025", "S3050")
+        for key in ("S3025", "S3050", "S31")
+        if any(get_float(row, key) is not None for row in joined_rows)
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -295,7 +309,8 @@ def write_md(path: Path, analysis_rows: list[dict[str, object]], joined_rows: li
         handle.write("This analysis joins the small-radius PPL probe, the existing stress table, and the existing downstream@30 summary.\n\n")
         handle.write("## Quick Read\n\n")
         handle.write(f"- Joined candidates: `{len(joined_rows)}`.\n")
-        handle.write(f"- Negative local slopes: `S3025={negative_counts['S3025']}`, `S3050={negative_counts['S3050']}`.\n")
+        negative_text = ", ".join(f"`{key}={value}`" for key, value in negative_counts.items())
+        handle.write(f"- Negative local slopes: {negative_text}.\n")
         handle.write("- A local-flatness downstream story would need a stable negative relation between local slope and downstream@30 score after controlling endpoint `L30`.\n")
         handle.write("- A stress story expects a positive relation between slope and `L40`/`Regret40` after controlling endpoint `L30`.\n\n")
         handle.write("## All-Candidate Downstream Rows\n\n")

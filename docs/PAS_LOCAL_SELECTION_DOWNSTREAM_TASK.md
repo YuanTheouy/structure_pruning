@@ -409,6 +409,53 @@ If `S3025/S3050` remain negative or uncorrelated under this strict path, stop
 the local-flatness rescue. If the nested path changes the conclusion, run the
 same command with `--probe-sparsity 0.3050 --delta 0.0050` to get nested `S31`.
 
+### Observed Strict-Nested Result
+
+Recorded on 2026-05-23 for the strict nested projector follow-up.
+
+Artifacts:
+
+```text
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested/local_delta_scores.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0025_nested/local_delta_analysis.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nested/local_delta_scores_with_s31.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nested_analysis/local_signal_correlation.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nested_analysis/local_selection_downstream_table.md
+```
+
+Strict nested projection sharply reduces current-projector artifacts: negative
+small-radius slopes drop from `S3025=6/S3050=6` to `S3025=2/S3050=2`.
+
+All-candidate downstream@30 controlled signal:
+
+| Predictor | Partial corr with `avg_pruned_score` controlling `L30` | Reading |
+| --- | --- | --- |
+| `S3025` | `-0.225739` | Correct direction, weak. |
+| `S3050` | `-0.331522` | Correct direction, strongest small-delta signal. |
+| `S31` | `-0.159325` | Correct direction but weaker/noisier than `S3050`. |
+| `S35` | `-0.200453` | Not a clean downstream/local-flatness signal. |
+
+Stress-budget controlled signal remains separated:
+
+| Predictor | Target | Partial corr controlling `L30` | Reading |
+| --- | --- | --- | --- |
+| `S3050` | `L40`/`Regret40` | about `0.12` | Weak cross-budget stress signal. |
+| `S31` | `L40`/`Regret40` | about `0.08` | Weak cross-budget stress signal. |
+| `S35` | `L40`/`Regret40` | `0.782805` | Strong stress-budget signal. |
+
+Selection-level result:
+
+| Scope | FF-Endpoint | PAS-S30.25/S30.50/S31 | PAS-S35 | Downstream oracle | Reading |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=2` | `0.343333` | `0.343333` | `0.446667` | `0.446667` | Local probes collapse to endpoint in the tightest scope. |
+| `top_m=5` | `0.343333` | `0.426667` | `0.468333` | `0.468333` | Local probes improve over endpoint but trail S35/oracle. |
+| `top_m=8/13` | `0.343333` | `0.426667` | `0.401667` | `0.468333` | Local probes improve over endpoint and S35, but not oracle. |
+
+Interpretation gate: strict nested small-delta probes provide evidence for a
+local fragility signal relevant to downstream@30, strongest at `S3050`.
+`S31` is a weaker confirmation, not a stronger one. Keep `S35` as a separate
+cross-budget compression-stress signal rather than a local-flatness proxy.
+
 ## Server Commands
 
 P0 analysis:
