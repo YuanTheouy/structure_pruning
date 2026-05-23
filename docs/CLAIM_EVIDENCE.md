@@ -559,6 +559,41 @@ scopes, yet the controlled local-slope/downstream relation is weak or unstable.
 If one more cheap PPL-only check is needed, run the optional `S31` probe before
 making any local-PAS downstream statement.
 
+PAS-local S31 follow-up, recorded 2026-05-23:
+
+Artifacts:
+
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050/local_delta_scores_with_s31.csv`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_selection_downstream_table.csv`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_signal_correlation.csv`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_negative_cases.md`
+- `/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_nestedness_summary.csv`
+
+Selection-level update:
+
+| Scope | FF-Endpoint | PAS-S30.50 | PAS-S31 | PAS-S35 | Reading |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | `S31` matches `S30.50`; local selection still beats endpoint but not oracle/S35. |
+| `top_m=8` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | `S31/S30.50` are best non-oracle rules in this scope. |
+| `top_m=13` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | Same as top-8. |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | All slope rules select the same negative-slope outlier without endpoint scoping. |
+
+Signal and nestedness gate:
+
+| Metric | Value | Reading |
+| --- | --- | --- |
+| `partial_corr(S31,avg_pruned_score|L30)` | `0.039776` | No meaningful controlled downstream relation. |
+| `partial_corr(S31,L40|L30)` | `0.043607` | No useful stress relation. |
+| `partial_corr(S35,L40|L30)` | `0.782805` | `S35` remains the stronger stress signal. |
+| `S31 negative: fraction with nestedness violation` | `0.500000` | Nestedness issues contaminate some negative slopes but do not explain all of them. |
+| `S31 nonnegative: fraction with nestedness violation` | `0.428571` | Violation rate is close to the negative group. |
+
+S31 reading: the local-selection phenomenon remains exploratory but does not
+become a local-flatness claim. Non-nested current projection is a real source
+of noise, especially through last-layer FFN re-additions, but negative slopes
+also occur under pure removal. A stricter nested projector evaluation would be
+needed before making any local-flatness/downstream statement.
+
 P4 one-more-setting command slot:
 
 - Preferred next setting:

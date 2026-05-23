@@ -1104,6 +1104,50 @@ interpretation. Keep SAM/flatness as motivation only. Optional next cheap check:
 run `S31` only if the team wants to resolve this ambiguity; do not run new
 downstream tasks first.
 
+P1 S31 follow-up, recorded 2026-05-23:
+
+```text
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050/local_delta_scores_with_s31.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_selection_downstream_table.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_signal_correlation.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_negative_cases.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_nestedness_summary.csv
+```
+
+Selection summary after adding `S31`:
+
+| Scope | FF-Endpoint | PAS-S30.50 | PAS-S31 | PAS-S35 | Status |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | `S31` matches `S30.50`; local selection beats endpoint |
+| `top_m=8` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | `S31/S30.50` are best non-oracle rules |
+| `top_m=13` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | same as top-8 |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | all slope rules select the same negative-slope outlier |
+
+Signal summary after adding `S31`:
+
+```text
+partial_corr(S31, avg_pruned_score | L30) = 0.039776
+partial_corr(S31, L40              | L30) = 0.043607
+partial_corr(S31, Regret40         | L30) = 0.043607
+partial_corr(S35, L40              | L30) = 0.782805
+partial_corr(S35, Regret40         | L30) = 0.782805
+```
+
+Nestedness audit:
+
+```text
+S31 negative group:    n=6, violation fraction=0.500000, avg added dims=136.833, avg removed dims=3719.83
+S31 nonnegative group: n=14, violation fraction=0.428571, avg added dims=120.143, avg removed dims=3721.14
+```
+
+P1 status: `S31` does not rescue the local-flatness story. It preserves the
+selection-level observation that local probes can beat endpoint inside some
+`top_m` endpoint-compatible scopes, but it adds no stable controlled relation
+to downstream@30 or stricter-budget regret. Current-projector non-nestedness is
+a real confound, but not a complete explanation: several negative local slopes
+have no re-added dimensions. The next logical test, if needed, is a strictly
+nested projector PPL evaluation, not additional downstream tasks.
+
 Optional figures after P0/P1:
 
 ```bash

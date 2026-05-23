@@ -249,6 +249,66 @@ Use the existing P0 projection sweep artifacts:
 This directly tests whether negative `S3025/S3050/S31` examples are driven by
 non-nested re-additions or other large mask jumps.
 
+### Observed P1 Result
+
+Recorded on 2026-05-23 for the optional `S31` PPL probe and nestedness audit.
+
+Artifacts:
+
+```text
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050/local_delta_scores_with_s31.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_selection_downstream_table.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_selection_downstream_table.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_signal_correlation.csv
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_analysis/local_signal_correlation.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_negative_cases.md
+/workspace/ckpts/pas_local_delta_probe/opt27b_seed3025_delta0050_nestedness_audit/local_delta_nestedness_summary.csv
+```
+
+Selection-level update:
+
+| Scope | FF-Endpoint | PAS-S30.50 | PAS-S31 | PAS-S35 | Reading |
+| --- | --- | --- | --- | --- | --- |
+| `top_m=2` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Local probes collapse to endpoint. |
+| `top_m=5` | `0.343333` | `0.426667` | `0.426667` | `0.468333` | `S31` selects the same candidate as `S30.50`. |
+| `top_m=8` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | `S31` again matches `S30.50`, above endpoint and S35 but below downstream oracle. |
+| `top_m=13` | `0.343333` | `0.426667` | `0.426667` | `0.401667` | Same as top-8. |
+| `epsilon=0.02/0.05` | `0.343333` | `0.343333` | `0.343333` | `0.343333` | Scope size is 1. |
+| `epsilon=0.10` | `0.343333` | `0.343333` | `0.343333` | `0.446667` | Local probes still collapse to endpoint. |
+| `all_candidates` | `0.343333` | `0.385000` | `0.385000` | `0.385000` | All slope rules select the same negative-slope outlier. |
+
+Signal update:
+
+| Scope | Metric | Value | Reading |
+| --- | --- | --- | --- |
+| all candidates | `partial_corr(S31,avg_pruned_score|L30)` | `0.039776` | Essentially no controlled downstream relation. |
+| all candidates | `partial_corr(S31,L40|L30)` | `0.043607` | No useful stricter-budget stress relation. |
+| all candidates | `partial_corr(S31,Regret40|L30)` | `0.043607` | Same. |
+| all candidates | `partial_corr(S35,L40|L30)` | `0.782805` | The original `S35` stress signal remains much stronger. |
+| all candidates | `partial_corr(S35,Regret40|L30)` | `0.782805` | Same. |
+
+Nestedness audit:
+
+| Slope | Group | n | Fraction with violation | Avg added dims | Avg removed dims | Reading |
+| --- | --- | --- | --- | --- | --- | --- |
+| `S3025` | negative | `6` | `0.333333` | `24.1667` | `773.167` | Some negative slopes are contaminated by re-additions, but most are pure removals. |
+| `S3050` | negative | `6` | `0.500000` | `160.667` | `1634.33` | Non-nested contamination is more visible at this radius. |
+| `S31` | negative | `6` | `0.500000` | `136.833` | `3719.83` | Half of negative `S31` examples have violations; half do not. |
+| `S31` | nonnegative | `14` | `0.428571` | `120.143` | `3721.14` | Violation rate and added dims are close to the negative group. |
+
+P1 gate result: `S31` does **not** resolve the ambiguity. It preserves the
+selection-level phenomenon (`PAS-S31` matches `PAS-S30.50` in useful `top_m`
+scopes), but it does not produce a stable local-flatness signal for
+downstream@30 or stress. Current-projector non-nested re-additions explain some
+negative-slope cases, especially for `S3050/S31`, but not all of them. Pure
+removal can also lower PPL, so the negative slopes cannot be dismissed as only
+a nestedness bug.
+
+If the team wants to rescue a strict local-flatness interpretation, the next
+experiment should evaluate a strictly nested projector path. Do not run more
+downstream tasks before that; the current-projector local probes have reached
+their evidential limit.
+
 ## Server Commands
 
 P0 analysis:
