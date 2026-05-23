@@ -29,6 +29,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def model_tag(model_name: str) -> str:
+    return model_name.replace("-", "").replace(".", "").replace("/", "_")
+
+
 def read_csv(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
@@ -236,7 +240,8 @@ def main() -> int:
                 }
             )
 
-    out_csv = Path(args.output_dir) / "downstream_retention_opt27b.csv"
+    tag = model_tag(Path(args.model).name)
+    out_csv = Path(args.output_dir) / f"downstream_retention_{tag}.csv"
     write_csv(out_csv, rows)
     by_candidate: dict[str, dict[str, object]] = {}
     for row in rows:
@@ -281,9 +286,9 @@ def main() -> int:
         item["avg_drop"] = sum(drops) / len(drops) if drops else ""
         candidate_summary.append(item)
     if candidate_summary:
-        summary_csv = Path(args.output_dir) / f"downstream_candidate_summary_opt27b_seed{args.seed}.csv"
+        summary_csv = Path(args.output_dir) / f"downstream_candidate_summary_{tag}_seed{args.seed}.csv"
         write_csv(summary_csv, candidate_summary)
-        analysis_csv = Path(args.output_dir) / f"downstream_analysis_opt27b_seed{args.seed}.csv"
+        analysis_csv = Path(args.output_dir) / f"downstream_analysis_{tag}_seed{args.seed}.csv"
         analysis_rows = metric_rows(candidate_summary, "all_candidates")
         ordered = sorted(
             [row for row in candidate_summary if to_float(row.get("L30_raw")) is not None],
@@ -296,7 +301,7 @@ def main() -> int:
     else:
         summary_csv = ""
         analysis_csv = ""
-    out_md = Path(args.output_dir) / "downstream_retention_opt27b.md"
+    out_md = Path(args.output_dir) / f"downstream_retention_{tag}.md"
     out_md.write_text(
         f"# Downstream Retention\n\nRows: {len(rows)}\nCSV: `{out_csv}`\n"
         f"Candidate summary: `{summary_csv}`\nAnalysis: `{analysis_csv}`\n",
@@ -317,7 +322,7 @@ def main() -> int:
             "downstream_analysis": str(analysis_csv),
         },
     }
-    with (Path(args.output_dir) / "downstream_manifest_opt27b.json").open("w", encoding="utf-8") as handle:
+    with (Path(args.output_dir) / f"downstream_manifest_{tag}.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, sort_keys=True)
         handle.write("\n")
     print(f"Wrote {out_csv}")
