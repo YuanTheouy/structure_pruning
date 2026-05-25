@@ -1,0 +1,7 @@
+model,seed,target_probe_heldout,n,pearson_S35_Delta40,spearman_S35_Delta40,partial_S35_L40_given_L30,partial_S35_Regret40_given_L30,partial_S35_Delta40_given_L30,stress_table
+OPT-2.7B,3025,30->35->40,20,0.83371,0.828571,0.81079,0.81079,0.81079,/workspace/ckpts/pas_stress_recovery/candidate_stress_table_opt27b_seed3025.csv
+OPT-2.7B,4025,30->35->40,20,0.475606,0.557895,0.308997,0.308997,0.308997,/workspace/ckpts/pas_informative_radius/opt-2.7b_seed4025/candidate_stress_table_opt27b_seed4025.csv
+OPT-2.7B,5025,30->35->40,20,0.804847,0.700752,0.765503,0.765503,0.765503,/workspace/ckpts/pas_informative_radius/opt-2.7b_seed5025/candidate_stress_table_opt27b_seed5025.csv
+OPT-1.3B,2025,30->35->40,20,0.660302,0.577444,0.569534,0.569534,0.569534,/workspace/ckpts/pas_stress_recovery_opt13b/candidate_stress_table_opt13b_seed2025.csv
+OPT-1.3B,3025,30->35->40,20,0.506907,0.511278,0.475503,0.475503,0.475503,/workspace/ckpts/pas_informative_radius/opt-1.3b_seed3025/candidate_stress_table_opt13b_seed3025.csv
+OPT-2.7B,6025,30->35->40,20,0.472481,0.589474,0.479184,0.479184,0.479184,/workspace/ckpts/pas_informative_radius/opt-2.7b_seed6025/candidate_stress_table_opt27b_seed6025.csv
