@@ -1920,12 +1920,23 @@ class ChannelPruningEnv:
 
     def _validate_ppl_only(self, model):
         """仅计算PPL，不进行下游任务评估 (用于初始化阶段)"""
-        return eval_ppl(model, self.tokenizer)
+        return eval_ppl(
+            model,
+            self.tokenizer,
+            bs=max(1, int(getattr(self.args, "eval_ppl_batch_size", 1))),
+            data_parallel=bool(getattr(self.args, "eval_ppl_data_parallel", False)),
+        )
 
     def _validate(self, model):
         
         # ppl = eval_ppl(model, self.tokenizer)
-        ppl = eval_ppl(model, self.tokenizer, dataset_override=self.active_reward_eval_set)
+        ppl = eval_ppl(
+            model,
+            self.tokenizer,
+            dataset_override=self.active_reward_eval_set,
+            bs=max(1, int(getattr(self.args, "eval_ppl_batch_size", 1))),
+            data_parallel=bool(getattr(self.args, "eval_ppl_data_parallel", False)),
+        )
         
         # 检查是否开启下游任务评估以及是否延迟评估
         enable_downstream = getattr(self.args, 'enable_downstream', True)

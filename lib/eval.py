@@ -121,14 +121,35 @@ from .data import get_loaders
 
 # Function to evaluate perplexity (ppl) on a specified model and tokenizer
 # MODIFIED: This function can now accept an override dataset
-def eval_ppl(model, tokenizer, device=None, dataset_override=None):
+def eval_ppl(
+    model,
+    tokenizer,
+    device=None,
+    dataset_override=None,
+    bs=1,
+    data_parallel=False,
+):
     """
     评估模型的PPL。如果提供了dataset_override，则使用它，否则加载默认的wikitext2测试集。
     """
     dataset = "wikitext2"
     
+    eval_model = model
     if device is None:
         device = next(model.parameters()).device
+
+    if data_parallel and torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        param_devices = {param.device for param in model.parameters()}
+        if len(param_devices) == 1 and next(iter(param_devices)).type == "cuda":
+            primary_device = next(iter(param_devices))
+            if primary_device.index in (None, 0):
+                print(f"INFO: eval_ppl using DataParallel over {torch.cuda.device_count()} GPUs, bs={bs}.")
+                eval_model = nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
+                device = torch.device("cuda:0")
+            else:
+                print(f"WARNING: DataParallel skipped because model is on {primary_device}, not cuda:0.")
+        else:
+            print("WARNING: DataParallel skipped because model parameters are already split across devices.")
 
     # This logic correctly passes the dataset (either override or default) to the core function
     if dataset_override is not None:
@@ -142,7 +163,7 @@ def eval_ppl(model, tokenizer, device=None, dataset_override=None):
         testenc = testloader # 在您的代码中，testloader就是testenc张量
     
     # 调用核心函数并返回浮点数结果
-    return eval_ppl_wikitext(model, testenc, 1, device).item()
+    return eval_ppl_wikitext(eval_model, testenc, bs, device).item()
 
 # MODIFIED: This function now correctly handles both a tensor and a list of samples
 def eval_ppl_wikitext(model, testenc, bs=1, device=None):
@@ -171,7 +192,8 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
     # --- [修正结束] ---
 
     # 现在，所有后续代码都必须使用 'testenc_tensor'
-    nsamples = testenc_tensor.numel() // model.seqlen
+    base_model = model.module if isinstance(model, nn.DataParallel) else model
+    nsamples = testenc_tensor.numel() // base_model.seqlen
     if nsamples == 0:
         # print("WARNING: Not enough tokens in the evaluation set for even one sample.")
         return torch.tensor(float('inf'))
@@ -182,8 +204,8 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
         for i in range(0, nsamples, bs):
             j = min(i + bs, nsamples)
             # 使用我们处理过的 testenc_tensor
-            inputs = testenc_tensor[:, (i * model.seqlen):(j * model.seqlen)]
-            inputs = inputs.reshape(j - i, model.seqlen)
+            inputs = testenc_tensor[:, (i * base_model.seqlen):(j * base_model.seqlen)]
+            inputs = inputs.reshape(j - i, base_model.seqlen)
 
             lm_logits = model(inputs).logits
             
@@ -193,10 +215,10 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
-            neg_log_likelihood = loss.float() * model.seqlen * (j - i)
+            neg_log_likelihood = loss.float() * base_model.seqlen * (j - i)
             nlls.append(neg_log_likelihood)
 
-        ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * model.seqlen))
+        ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * base_model.seqlen))
 
     torch.cuda.empty_cache()
 

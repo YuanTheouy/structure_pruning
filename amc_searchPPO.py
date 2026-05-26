@@ -268,6 +268,10 @@ def parse_args():
                         help='Directory for candidates, probe results, rerank outputs, and final policy metadata.')
     parser.add_argument('--candidate_output_dir', default=None, type=str,
                         help='Alias for --candidate_dir.')
+    parser.add_argument('--eval_ppl_batch_size', default=1, type=int,
+                        help='Batch size used inside PPL validation.')
+    parser.add_argument('--eval_ppl_data_parallel', action='store_true',
+                        help='Use torch.nn.DataParallel for PPL validation when one search process can see multiple GPUs.')
     parser.add_argument('--run_id', default=None, type=str,
                         help='Run id used under results/{model}/{sparsity}/{run_id}/.')
     parser.add_argument('--candidates_path', default=None, type=str,
