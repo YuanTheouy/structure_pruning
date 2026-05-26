@@ -271,7 +271,7 @@ def parse_args():
     parser.add_argument('--eval_ppl_batch_size', default=1, type=int,
                         help='Batch size used inside PPL validation.')
     parser.add_argument('--eval_ppl_data_parallel', action='store_true',
-                        help='Use torch.nn.DataParallel for PPL validation when one search process can see multiple GPUs.')
+                        help='Keep one PPO search, load the model on cuda:0, and use torch.nn.DataParallel to split PPL validation batches across visible GPUs.')
     parser.add_argument('--run_id', default=None, type=str,
                         help='Run id used under results/{model}/{sparsity}/{run_id}/.')
     parser.add_argument('--candidates_path', default=None, type=str,

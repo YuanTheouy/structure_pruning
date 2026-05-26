@@ -485,6 +485,13 @@ class ChannelPruningEnv:
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False, trust_remote_code=True)
 
+    def _use_eval_data_parallel(self):
+        return (
+            bool(getattr(self.args, "eval_ppl_data_parallel", False))
+            and torch.cuda.is_available()
+            and torch.cuda.device_count() > 1
+        )
+
 
     def _get_model_local(self, verbose=True):
         # 简单的设备映射 - 严格遵循CUDA_VISIBLE_DEVICES设置
@@ -492,11 +499,19 @@ class ChannelPruningEnv:
             gpu_count = torch.cuda.device_count()
             if verbose:
                 print(f"=> Detected {gpu_count} visible GPU(s)")
-            
-            # 简单策略：使用auto让transformers处理，但不覆盖用户的GPU绑定
-            device_map = "auto"
-            if verbose:
-                print(f"=> Using automatic device mapping with {gpu_count} visible GPU(s)")
+
+            if self._use_eval_data_parallel():
+                device_map = {"": 0}
+                if verbose:
+                    print(
+                        "=> Loading the whole model on cuda:0 so PPL DataParallel "
+                        f"can split validation batches over {gpu_count} GPU(s)"
+                    )
+            else:
+                # 简单策略：使用auto让transformers处理，但不覆盖用户的GPU绑定
+                device_map = "auto"
+                if verbose:
+                    print(f"=> Using automatic device mapping with {gpu_count} visible GPU(s)")
         else:
             device_map = "cpu"
             if verbose:
@@ -599,8 +614,12 @@ class ChannelPruningEnv:
         # 在进行验证（完整前向传播）之前，我们必须调用dispatch_model，
         # 让accelerate根据其内部的hf_device_map重新校准和分配所有层，
         # 确保模型恢复到设备一致的状态。
-        print("=> Re-dispatching model to correct device map after pruning...")
-        self.model = dispatch_model(self.model, device_map=self.model.hf_device_map)
+        if self._use_eval_data_parallel():
+            print("=> Keeping pruned model on cuda:0 for PPL DataParallel validation...")
+            self.model = self.model.to(self.device)
+        elif hasattr(self.model, "hf_device_map"):
+            print("=> Re-dispatching model to correct device map after pruning...")
+            self.model = dispatch_model(self.model, device_map=self.model.hf_device_map)
         # --- END: CRITICAL FIX ---
         
         total_time = time.time() - start_time
@@ -1246,12 +1265,17 @@ class ChannelPruningEnv:
             # 4. 将这个恢复好的、完整的模型赋给 self.model 并移动到GPU
             self.model = fresh_model
             if self.device.type != 'cpu':
-                # 自动计算设备映射
-                max_memory = get_balanced_memory(self.model, max_memory=None, no_split_module_classes=self.model._no_split_modules)
-                device_map = infer_auto_device_map(self.model, max_memory=max_memory, no_split_module_classes=self.model._no_split_modules)
-                
-                # 分发模型到多个GPU
-                self.model = dispatch_model(self.model, device_map=device_map)
+                if self._use_eval_data_parallel():
+                    # DataParallel requires the full module to live on cuda:0
+                    # before it scatters validation batches to the other GPUs.
+                    self.model = self.model.to(self.device)
+                else:
+                    # 自动计算设备映射
+                    max_memory = get_balanced_memory(self.model, max_memory=None, no_split_module_classes=self.model._no_split_modules)
+                    device_map = infer_auto_device_map(self.model, max_memory=max_memory, no_split_module_classes=self.model._no_split_modules)
+                    
+                    # 分发模型到多个GPU
+                    self.model = dispatch_model(self.model, device_map=device_map)
 
             # print("=> Model has been successfully reset to its original state.")
         else:
