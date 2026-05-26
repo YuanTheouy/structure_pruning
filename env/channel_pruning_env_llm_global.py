@@ -661,9 +661,7 @@ class ChannelPruningEnv:
                 handle.remove()
             # print("==> [DEBUG] All hooks removed.")
         # =========================================================================
-        
-        # print("=> Validating pruned model (PPL + Downstream tasks)...")
-        ppl = self._validate(self.model)
+
         if ppl is not None and np.isfinite(ppl) and ppl > 0:
             # 1. PPL 是一个有效的正数
             #    我们仍然使用您原来的奖励函数 self.reward()
