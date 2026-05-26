@@ -13,6 +13,33 @@ from .data import get_loaders
 # from lib.lm_eval_local_backup.utils import pattern_match
 # from lib.lm_eval_local_backup.models import get_model
 
+
+class _PPLLossWrapper(nn.Module):
+    """Compute PPL negative log-likelihood on each DataParallel replica."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.seqlen = model.seqlen
+        self.loss_fct = nn.CrossEntropyLoss()
+
+    def forward(self, inputs):
+        lm_logits = self.model(inputs).logits
+        shift_logits = lm_logits[:, :-1, :].contiguous()
+        shift_labels = inputs[:, 1:]
+        loss = self.loss_fct(
+            shift_logits.reshape(-1, shift_logits.size(-1)),
+            shift_labels.reshape(-1),
+        )
+        token_count = self.seqlen * inputs.shape[0]
+        nll = loss.float() * token_count
+        return torch.stack(
+            (
+                nll,
+                torch.tensor(float(token_count), device=inputs.device, dtype=torch.float32),
+            )
+        )
+
 # def get_loader_benchmark(dataset, tokenizer):
 #     dataloader = []
 #     seqlen=2048
@@ -143,8 +170,11 @@ def eval_ppl(
         if len(param_devices) == 1 and next(iter(param_devices)).type == "cuda":
             primary_device = next(iter(param_devices))
             if primary_device.index in (None, 0):
-                print(f"INFO: eval_ppl using DataParallel over {torch.cuda.device_count()} GPUs, bs={bs}.")
-                eval_model = nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
+                print(
+                    "INFO: eval_ppl using loss-local DataParallel over "
+                    f"{torch.cuda.device_count()} GPUs, bs={bs}."
+                )
+                eval_model = nn.DataParallel(_PPLLossWrapper(model), device_ids=list(range(torch.cuda.device_count())))
                 device = torch.device("cuda:0")
             else:
                 print(f"WARNING: DataParallel skipped because model is on {primary_device}, not cuda:0.")
@@ -199,6 +229,8 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
         return torch.tensor(float('inf'))
         
     nlls = []
+    token_counts = []
+    loss_local_parallel = isinstance(base_model, _PPLLossWrapper)
 
     with torch.no_grad():
         for i in range(0, nsamples, bs):
@@ -206,6 +238,14 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
             # 使用我们处理过的 testenc_tensor
             inputs = testenc_tensor[:, (i * base_model.seqlen):(j * base_model.seqlen)]
             inputs = inputs.reshape(j - i, base_model.seqlen)
+
+            if loss_local_parallel:
+                stats = model(inputs).float()
+                if stats.ndim == 1:
+                    stats = stats.unsqueeze(0)
+                nlls.append(stats[:, 0].sum())
+                token_counts.append(stats[:, 1].sum())
+                continue
 
             lm_logits = model(inputs).logits
             
@@ -221,7 +261,10 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
             neg_log_likelihood = loss.float() * base_model.seqlen * (j - i)
             nlls.append(neg_log_likelihood)
 
-        ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * base_model.seqlen))
+        if token_counts:
+            ppl = torch.exp(torch.stack(nlls).sum() / torch.stack(token_counts).sum())
+        else:
+            ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * base_model.seqlen))
 
     torch.cuda.empty_cache()
 
