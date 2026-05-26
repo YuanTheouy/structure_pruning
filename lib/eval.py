@@ -213,7 +213,10 @@ def eval_ppl_wikitext(model, testenc, bs=1, device=None):
             shift_labels = inputs[:, 1:]
 
             loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss_fct(
+                shift_logits.reshape(-1, shift_logits.size(-1)),
+                shift_labels.reshape(-1),
+            )
 
             neg_log_likelihood = loss.float() * base_model.seqlen * (j - i)
             nlls.append(neg_log_likelihood)
