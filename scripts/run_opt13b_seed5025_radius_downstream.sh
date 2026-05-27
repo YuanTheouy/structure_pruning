@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# End-to-end OPT-1.3B replicate for the radius/downstream story.
+# End-to-end OPT replicate for the radius/downstream story.
 #
 # What it runs:
 #   1. Single PPO search, one trajectory, 1000 episodes.
@@ -9,8 +9,9 @@ set -Eeuo pipefail
 #   3. Downstream@30 on top15-by-L30 plus key PAS/oracle candidates.
 #   4. Final markdown summary under $ROOT/FINAL_SUMMARY.md.
 #
-# Defaults match the 2026-05-26 seed4025 pilot. Override through env vars:
-#   SEED=5025 GPU_SEARCH=6 GPU_IDS="0 1 2 3 4 5 6 7" bash scripts/run_opt13b_seed5025_radius_downstream.sh
+# Defaults match the 2026-05-26 OPT-1.3B seed4025 pilot. Override through env vars:
+#   SEED=5025 GPU_SEARCH=6 GPU_IDS="1 2 3 4 5 6 7" bash scripts/run_opt13b_seed5025_radius_downstream.sh
+#   MODEL=/workspace/Models/opt-2.7b MODEL_NAME=opt-2.7b SEED=7025 bash scripts/run_opt13b_seed5025_radius_downstream.sh
 
 cd /workspace/structure_pruning
 
@@ -20,7 +21,7 @@ MODEL_NAME="${MODEL_NAME:-opt-1.3b}"
 TARGET="${TARGET:-0.30}"
 PRESERVE="${PRESERVE:-0.700000}"
 GPU_SEARCH="${GPU_SEARCH:-6}"
-GPU_IDS="${GPU_IDS:-0 1 2 3 4 5 6 7}"
+GPU_IDS="${GPU_IDS:-1 2 3 4 5 6 7}"
 TOP_K="${TOP_K:-40}"
 N_SAMPLES="${N_SAMPLES:-64}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
@@ -371,7 +372,10 @@ from pathlib import Path
 root = Path(os.environ["ROOT"])
 down = Path(os.environ["DOWN"])
 seed = os.environ["SEED"]
-summary_path = down / f"downstream_candidate_summary_opt13b_seed{seed}.csv"
+def model_tag(model_name):
+    return model_name.replace("-", "").replace(".", "").replace("/", "_")
+
+summary_path = down / f"downstream_candidate_summary_{model_tag(os.environ['MODEL_NAME'])}_seed{seed}.csv"
 
 subset = {row["candidate_id"]: row for row in csv.DictReader(open(down / "downstream30_local_radius_subset_table.csv"))}
 summary = {row["candidate_id"]: row for row in csv.DictReader(open(summary_path))}
@@ -476,7 +480,7 @@ with open(joined, "w", newline="") as handle:
 
 md = root / "FINAL_SUMMARY.md"
 with open(md, "w") as handle:
-    handle.write(f"# OPT-1.3B Seed{seed} Replicate Summary\n\n")
+    handle.write(f"# {os.environ['MODEL_NAME']} Seed{seed} Replicate Summary\n\n")
     handle.write("## Correlation With Downstream@30\n\n")
     handle.write("| metric | pearson | spearman | partial_corr(metric, downstream | L30) |\n")
     handle.write("| --- | --- | --- | --- |\n")
