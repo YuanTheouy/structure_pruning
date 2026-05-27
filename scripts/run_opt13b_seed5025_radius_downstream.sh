@@ -139,6 +139,14 @@ from pathlib import Path
 
 path = Path(os.environ["CAND"]) / "candidates.jsonl"
 rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+expected = f"{os.environ['MODEL_NAME']}_seed{os.environ['SEED']}"
+bad = [row["candidate_id"] for row in rows[: min(10, len(rows))] if expected not in row["candidate_id"]]
+if bad:
+    raise SystemExit(
+        "candidate pool mismatch: expected candidate_id containing "
+        f"{expected!r}, but saw examples {bad[:3]!r}. "
+        f"CAND={path.parent}"
+    )
 rows = sorted(rows, key=lambda row: float(row.get("endpoint_ppl", 1e99)))
 for row in rows[:20]:
     print(

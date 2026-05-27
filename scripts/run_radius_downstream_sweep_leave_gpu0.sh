@@ -9,7 +9,7 @@ set -Eeuo pipefail
 #   model_name|model_path|seed|search_gpu|train_episode
 #
 # Example:
-#   SETTINGS="opt-1.3b|/workspace/Models/opt-1.3b|6025|6|1000 opt-2.7b|/workspace/Models/opt-2.7b|7025|5|1000" \
+#   SETTINGS="opt-2.7b|/workspace/Models/opt-2.7b|7025|5|1000 opt-2.7b|/workspace/Models/opt-2.7b|8025|4|1000" \
 #     bash scripts/run_radius_downstream_sweep_leave_gpu0.sh
 
 cd /workspace/structure_pruning
@@ -21,8 +21,8 @@ N_SAMPLES="${N_SAMPLES:-64}"
 BATCH_SIZE="${BATCH_SIZE:-50}"
 
 DEFAULT_SETTINGS=(
-  "opt-1.3b|/workspace/Models/opt-1.3b|6025|6|1000"
   "opt-2.7b|/workspace/Models/opt-2.7b|7025|5|1000"
+  "opt-2.7b|/workspace/Models/opt-2.7b|8025|4|1000"
 )
 
 if [[ -n "${SETTINGS:-}" ]]; then
