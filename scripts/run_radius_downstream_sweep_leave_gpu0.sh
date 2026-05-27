@@ -46,6 +46,9 @@ for spec in "${RUN_SETTINGS[@]}"; do
   fi
 
   root="/workspace/ckpts/pas_informative_radius/${model_name}_seed${seed}_ff${train_episode}_growth_rep1"
+  run_id="ff_single_seed${seed}_ep${train_episode}_gpu${search_gpu}_growth5to100_rep1"
+  search="/workspace/ckpts/${model_name}/sparsity_0.30/${run_id}"
+  cand="${search}/candidates"
   mkdir -p "$root"
   log="$root/run_all.log"
 
@@ -63,7 +66,13 @@ for spec in "${RUN_SETTINGS[@]}"; do
   N_SAMPLES="$N_SAMPLES" \
   BATCH_SIZE="$BATCH_SIZE" \
   DOWNSTREAM_LIMIT="$DOWNSTREAM_LIMIT" \
-  ROOT="$root" \
+  RUN_ID_OVERRIDE="$run_id" \
+  SEARCH_OVERRIDE="$search" \
+  CAND_OVERRIDE="$cand" \
+  ROOT_OVERRIDE="$root" \
+  PATH40_OVERRIDE="$root/path30_35_40_fixed5" \
+  LOCAL_OVERRIDE="$root/local_radius_fixed5" \
+  DOWN_OVERRIDE="$root/downstream30_local_radius" \
     bash scripts/run_opt13b_seed5025_radius_downstream.sh 2>&1 | tee "$log"
 
   echo "===== DONE $model_name seed=$seed ====="

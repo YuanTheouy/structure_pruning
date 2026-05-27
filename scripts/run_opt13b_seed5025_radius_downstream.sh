@@ -9,7 +9,9 @@ set -Eeuo pipefail
 #   3. Downstream@30 on top15-by-L30 plus key PAS/oracle candidates.
 #   4. Final markdown summary under $ROOT/FINAL_SUMMARY.md.
 #
-# Defaults match the 2026-05-26 OPT-1.3B seed4025 pilot. Override through env vars:
+# Defaults match the 2026-05-26 OPT-1.3B seed4025 pilot. Override through env vars.
+# Path-like values intentionally use *_OVERRIDE variables so stale shell
+# variables such as CAND/SEARCH from previous runs cannot silently poison a run.
 #   SEED=5025 GPU_SEARCH=6 GPU_IDS="1 2 3 4 5 6 7" bash scripts/run_opt13b_seed5025_radius_downstream.sh
 #   MODEL=/workspace/Models/opt-2.7b MODEL_NAME=opt-2.7b SEED=7025 bash scripts/run_opt13b_seed5025_radius_downstream.sh
 
@@ -32,15 +34,18 @@ TASKS="${TASKS:-piqa,hellaswag,winogrande,arc_easy,arc_challenge,boolq}"
 
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
 
-RUN_ID="${RUN_ID:-ff_single_seed${SEED}_ep${TRAIN_EPISODE}_gpu${GPU_SEARCH}_growth5to100_rep1}"
-SEARCH="${SEARCH:-/workspace/ckpts/${MODEL_NAME}/sparsity_${TARGET}/${RUN_ID}}"
-CAND="${CAND:-${SEARCH}/candidates}"
-ROOT="${ROOT:-/workspace/ckpts/pas_informative_radius/${MODEL_NAME}_seed${SEED}_ff1000_growth_rep1}"
-PATH40="${PATH40:-${ROOT}/path30_35_40_fixed5}"
-LOCAL="${LOCAL:-${ROOT}/local_radius_fixed5}"
-DOWN="${DOWN:-${ROOT}/downstream30_local_radius}"
+RUN_ID_DEFAULT="ff_single_seed${SEED}_ep${TRAIN_EPISODE}_gpu${GPU_SEARCH}_growth5to100_rep1"
+ROOT_DEFAULT="/workspace/ckpts/pas_informative_radius/${MODEL_NAME}_seed${SEED}_ff${TRAIN_EPISODE}_growth_rep1"
 
-export PYTHON_BIN MODEL MODEL_NAME SEED CAND GPU_IDS TOP_K N_SAMPLES BATCH_SIZE ROOT PATH40 LOCAL DOWN
+RUN_ID="${RUN_ID_OVERRIDE:-$RUN_ID_DEFAULT}"
+SEARCH="${SEARCH_OVERRIDE:-/workspace/ckpts/${MODEL_NAME}/sparsity_${TARGET}/${RUN_ID}}"
+CAND="${CAND_OVERRIDE:-${SEARCH}/candidates}"
+ROOT="${ROOT_OVERRIDE:-$ROOT_DEFAULT}"
+PATH40="${PATH40_OVERRIDE:-${ROOT}/path30_35_40_fixed5}"
+LOCAL="${LOCAL_OVERRIDE:-${ROOT}/local_radius_fixed5}"
+DOWN="${DOWN_OVERRIDE:-${ROOT}/downstream30_local_radius}"
+
+export PYTHON_BIN MODEL MODEL_NAME SEED RUN_ID SEARCH CAND GPU_IDS TOP_K N_SAMPLES BATCH_SIZE ROOT PATH40 LOCAL DOWN
 
 mkdir -p "$SEARCH" "$ROOT" "$PATH40" "$LOCAL" "$DOWN"
 
