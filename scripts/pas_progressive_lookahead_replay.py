@@ -279,6 +279,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=0.02)
+    parser.add_argument("--promotion-mode", choices=["simple", "strict"], default="simple",
+                        help="simple: enough candidates and PAS improves next stage; strict: also require endpoint_price <= epsilon.")
     parser.add_argument("--promotion-min-candidates", type=int, default=0,
                         help="Minimum candidates near a stage before the PAS promotion gate can advance. Default: top-k.")
     parser.add_argument("--projection-mode", default="nested_from_base", choices=["nested_from_base", "current"])
@@ -388,10 +390,10 @@ def main() -> int:
             hold_reasons = []
             if not enough_candidates:
                 hold_reasons.append(f"candidate_count<{promotion_min_candidates}")
-            if not (endpoint_price <= args.epsilon):
+            if args.promotion_mode == "strict" and not (endpoint_price <= args.epsilon):
                 hold_reasons.append(f"endpoint_price>{args.epsilon:g}")
-            if not (lookahead_gain >= args.margin):
-                hold_reasons.append(f"lookahead_gain<{args.margin:g}")
+            if not (lookahead_gain > args.margin):
+                hold_reasons.append(f"lookahead_gain<={args.margin:g}")
             promotion_decision = "PROMOTE" if not hold_reasons else "HOLD"
             online_gate_probe_evals = 3 * len(top_candidates)
 
@@ -432,6 +434,7 @@ def main() -> int:
                 "stage": stage,
                 "next_stage": next_stage,
                 "promotion_decision": promotion_decision,
+                "promotion_mode": args.promotion_mode,
                 "hold_reason": ";".join(hold_reasons),
                 "candidate_count": len(stage_candidates),
                 "top_k": args.top_k,
@@ -482,6 +485,7 @@ def main() -> int:
                         "lookahead_gain": lookahead_gain if rule == "PAS-lookahead" else "",
                         "gate_passed": rule_gate_passed if rule == "PAS-lookahead" else "",
                         "promotion_decision": promotion_decision if rule == "PAS-lookahead" else "",
+                        "promotion_mode": args.promotion_mode if rule == "PAS-lookahead" else "",
                         "promotion_hold_reason": ";".join(hold_reasons) if rule == "PAS-lookahead" else "",
                         "promotion_min_candidates": promotion_min_candidates if rule == "PAS-lookahead" else "",
                         "promotion_candidate_count": len(stage_candidates) if rule == "PAS-lookahead" else "",
@@ -526,12 +530,12 @@ def main() -> int:
         handle.write(f"- csv: `{selection_csv}`\n")
         handle.write(f"- cache: `{cache_path}`\n\n")
         handle.write("## PAS Promotion Gate\n\n")
-        handle.write("| prefix | stage | next | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | pas_candidate |\n")
-        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+        handle.write("| prefix | stage | next | mode | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | pas_candidate |\n")
+        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
         for row in promotion_rows:
             handle.write(
                 f"| {row['prefix_step']} | {row['stage']} | {row['next_stage']} | "
-                f"{row['promotion_decision']} | {row['episodes_saved_vs_full_prefix']} | "
+                f"{row['promotion_mode']} | {row['promotion_decision']} | {row['episodes_saved_vs_full_prefix']} | "
                 f"{row['online_gate_probe_evals']} | {row['endpoint_price']} | "
                 f"{row['lookahead_gain']} | {row['hold_reason']} | {row['pas_candidate']} |\n"
             )

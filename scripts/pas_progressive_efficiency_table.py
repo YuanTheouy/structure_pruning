@@ -173,6 +173,7 @@ def main() -> int:
                 "total_eval_budget": row["total_eval_budget"],
                 "gate_passed": row["gate_passed"],
                 "promotion_decision": row.get("promotion_decision", ""),
+                "promotion_mode": row.get("promotion_mode", ""),
                 "promotion_hold_reason": row.get("promotion_hold_reason", ""),
                 "online_gate_probe_evals": row.get("online_gate_probe_evals", ""),
                 "episodes_saved_vs_full_prefix": row.get("episodes_saved_vs_full_prefix", ""),
@@ -207,23 +208,23 @@ def main() -> int:
         ]
         promotion_rows.sort(key=lambda row: (f(row.get("prefix_step"), 0), f(row.get("stage"), 0)))
         handle.write("\n## PAS Promotion Gate\n\n")
-        handle.write("| prefix | stage | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | candidate |\n")
-        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+        handle.write("| prefix | stage | mode | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | candidate |\n")
+        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
         for row in promotion_rows:
             handle.write(
                 f"| {row.get('prefix_step', '')} | {row.get('stage', '')} | "
-                f"{row.get('promotion_decision', '')} | {row.get('episodes_saved_vs_full_prefix', '')} | "
+                f"{row.get('promotion_mode', '')} | {row.get('promotion_decision', '')} | {row.get('episodes_saved_vs_full_prefix', '')} | "
                 f"{row.get('online_gate_probe_evals', '')} | {row.get('endpoint_price', '')} | "
                 f"{row.get('lookahead_gain', '')} | {row.get('promotion_hold_reason', '')} | "
                 f"{row.get('candidate_id', '')} |\n"
             )
         handle.write("\n## Efficiency Table\n\n")
-        handle.write("| prefix | rule | L30 | PPL30 | gap_to_FF_full | Regret40 | promote | saved_eps | extra_probe_evals | total_eval_budget | candidate |\n")
-        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+        handle.write("| prefix | rule | L30 | PPL30 | gap_to_FF_full | Regret40 | mode | promote | saved_eps | extra_probe_evals | total_eval_budget | candidate |\n")
+        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
         for row in out_rows:
             handle.write(
                 f"| {row['prefix_step']} | {row['rule']} | {row['L30']} | {row['PPL30']} | "
-                f"{fmt(row['L30_gap_to_FF_full'])} | {row['Regret40']} | {row['promotion_decision']} | "
+                f"{fmt(row['L30_gap_to_FF_full'])} | {row['Regret40']} | {row['promotion_mode']} | {row['promotion_decision']} | "
                 f"{row['episodes_saved_vs_full_prefix']} | {row['extra_probe_evals']} | "
                 f"{row['total_eval_budget']} | {row['candidate_id']} |\n"
             )
