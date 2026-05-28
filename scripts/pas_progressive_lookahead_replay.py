@@ -299,6 +299,17 @@ def main() -> int:
     candidates = read_jsonl(source_path)
     if not candidates:
         raise RuntimeError(f"No candidates found under {candidate_dir}")
+    expected_prefix = f"{args.model_name}_seed{args.seed}"
+    bad_ids = [
+        row.get("candidate_id", "")
+        for row in candidates[: min(20, len(candidates))]
+        if expected_prefix not in row.get("candidate_id", "")
+    ]
+    if bad_ids:
+        raise RuntimeError(
+            "candidate pool mismatch: expected candidate_id containing "
+            f"{expected_prefix!r}, saw {bad_ids[:5]!r}; source={source_path}"
+        )
     candidates_by_id = {row["candidate_id"]: row for row in candidates}
     stages = parse_float_list(args.stages)
     prefixes = parse_int_list(args.prefix_steps)
@@ -437,6 +448,11 @@ def main() -> int:
 
     write_csv(cache_path, list(cache_rows.values()))
     selection_csv = out_dir / "progressive_pas_selection.csv"
+    if not selection_rows:
+        raise RuntimeError(
+            "No selection rows generated. Check candidate current_sparsity values, "
+            "stage windows, prefix steps, and candidate source."
+        )
     write_csv(selection_csv, selection_rows)
     manifest_path = out_dir / "progressive_pas_manifest.json"
     write_json(manifest_path, manifest)

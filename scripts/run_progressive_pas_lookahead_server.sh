@@ -27,12 +27,13 @@ SAVE_EVERY=${SAVE_EVERY:-"25"}
 GRADUAL_INITIAL_SPARSITY=${GRADUAL_INITIAL_SPARSITY:-"0.05"}
 GRADUAL_PRUNING_END_EPISODE=${GRADUAL_PRUNING_END_EPISODE:-"1000"}
 
-RUN_ID=${RUN_ID:-"progressive_pas_lookahead_seed${SEED}_ep${TRAIN_EPISODES}_gpu${SEARCH_GPU}"}
-RUN_ROOT=${RUN_ROOT:-"/workspace/ckpts/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/${RUN_ID}"}
-CANDIDATE_DIR=${CANDIDATE_DIR:-"${RUN_ROOT}/candidates"}
-OUT_ROOT=${OUT_ROOT:-"/workspace/ckpts/pas_progressive_lookahead/${MODEL_NAME}_seed${SEED}_ep${TRAIN_EPISODES}"}
-REPLAY_DIR=${REPLAY_DIR:-"${OUT_ROOT}/replay"}
-LOG_DIR=${LOG_DIR:-"${OUT_ROOT}/logs"}
+RUN_ID_DEFAULT="progressive_pas_lookahead_seed${SEED}_ep${TRAIN_EPISODES}_gpu${SEARCH_GPU}"
+RUN_ID=${RUN_ID_OVERRIDE:-"${RUN_ID_DEFAULT}"}
+RUN_ROOT=${RUN_ROOT_OVERRIDE:-"/workspace/ckpts/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/${RUN_ID}"}
+CANDIDATE_DIR=${CANDIDATE_DIR_OVERRIDE:-"${RUN_ROOT}/candidates"}
+OUT_ROOT=${OUT_ROOT_OVERRIDE:-"/workspace/ckpts/pas_progressive_lookahead/${MODEL_NAME}_seed${SEED}_ep${TRAIN_EPISODES}"}
+REPLAY_DIR=${REPLAY_DIR_OVERRIDE:-"${OUT_ROOT}/replay"}
+LOG_DIR=${LOG_DIR_OVERRIDE:-"${OUT_ROOT}/logs"}
 mkdir -p "${RUN_ROOT}" "${CANDIDATE_DIR}" "${REPLAY_DIR}" "${LOG_DIR}"
 
 unset HF_DATASETS_OFFLINE
