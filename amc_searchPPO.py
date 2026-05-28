@@ -157,7 +157,12 @@ def parse_args():
     
     # Gradual pruning parameters    
     parser.add_argument('--use_gradual_pruning', action='store_true',
-                        help='Enable gradual pruning with a cubic schedule.')
+                        help='Enable gradual pruning.')
+    parser.add_argument('--gradual_pruning_schedule', default='cubic',
+                        choices=['cubic', 'staircase'],
+                        help='Gradual pruning schedule type.')
+    parser.add_argument('--gradual_stage_sparsities', default=None, type=str,
+                        help='Comma-separated sparsity stages for staircase gradual pruning, e.g. 0.05,0.10,0.15,0.20,0.25,0.30.')
     parser.add_argument('--gradual_final_sparsity', default=0.5, type=float,
                         help='The final target sparsity (1 - preserve_ratio) for the gradual schedule.')
     parser.add_argument('--gradual_initial_sparsity', default=0.0, type=float,
@@ -883,6 +888,7 @@ def train(num_episode, agent, env, output, candidate_recorder=None):
     # 渐进式剪枝参数设置
     if args.use_gradual_pruning:
         print("=> Gradual Pruning Schedule Enabled.")
+        print(f"   Mode: {args.gradual_pruning_schedule}")
         print(f"   Target Sparsity: {args.gradual_final_sparsity}")
         print(f"   Schedule: Episode {args.gradual_pruning_start_episode} to {args.gradual_pruning_end_episode}")
         
@@ -891,6 +897,24 @@ def train(num_episode, agent, env, output, candidate_recorder=None):
         pruning_duration = tf - t0
         if pruning_duration <= 0:
             raise ValueError("gradual_pruning_end_episode must be greater than start_episode.")
+
+        gradual_stage_sparsities = None
+        if args.gradual_pruning_schedule == 'staircase':
+            if args.gradual_stage_sparsities:
+                gradual_stage_sparsities = [
+                    float(x.strip()) for x in args.gradual_stage_sparsities.split(',')
+                    if x.strip()
+                ]
+            else:
+                gradual_stage_sparsities = [
+                    args.gradual_initial_sparsity,
+                    args.gradual_final_sparsity,
+                ]
+            if len(gradual_stage_sparsities) < 2:
+                raise ValueError("staircase gradual pruning needs at least two sparsity stages.")
+            if any(s < 0.0 or s >= 1.0 for s in gradual_stage_sparsities):
+                raise ValueError("gradual_stage_sparsities must be in [0, 1).")
+            print(f"   Stage Sparsities: {gradual_stage_sparsities}")
     
     # 数据集渐进增长参数设置
     if args.use_dataset_growth:
@@ -966,9 +990,19 @@ def train(num_episode, agent, env, output, candidate_recorder=None):
 
                 if args.use_gradual_pruning:
                     current_progress = np.clip((episode - t0) / pruning_duration, 0.0, 1.0)
-                    preserve_i = 1.0 - args.gradual_initial_sparsity
-                    preserve_f = args.preserve_ratio
-                    current_preserve_ratio = preserve_f + (preserve_i - preserve_f) * (1 - current_progress)**3
+                    if args.gradual_pruning_schedule == 'staircase':
+                        stage_count = len(gradual_stage_sparsities)
+                        stage_index = min(
+                            int(current_progress * (stage_count - 1)),
+                            stage_count - 1,
+                        )
+                        if current_progress >= 1.0:
+                            stage_index = stage_count - 1
+                        current_preserve_ratio = 1.0 - gradual_stage_sparsities[stage_index]
+                    else:
+                        preserve_i = 1.0 - args.gradual_initial_sparsity
+                        preserve_f = args.preserve_ratio
+                        current_preserve_ratio = preserve_f + (preserve_i - preserve_f) * (1 - current_progress)**3
                     env.update_target_ratio(current_preserve_ratio)
                     current_sparsity = 1.0 - current_preserve_ratio
                 
