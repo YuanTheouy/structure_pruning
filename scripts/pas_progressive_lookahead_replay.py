@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import copy
 import json
 import math
 import os
@@ -265,6 +266,37 @@ def choose_min(rows: list[dict[str, str]], key: str) -> dict[str, str]:
     return min(rows, key=lambda row: (as_float(row.get(key)), as_float(row.get("logppl_zero")), row.get("candidate_id", "")))
 
 
+def make_carried_candidate(
+    *,
+    candidate: dict,
+    probe_row: dict[str, str],
+    prefix: int,
+    stage: float,
+    next_stage: float,
+) -> dict:
+    carried = copy.deepcopy(candidate)
+    parent_id = probe_row.get("candidate_id", candidate.get("candidate_id", "candidate"))
+    carry_id = f"{parent_id}__pascarry_{safe_float_label(stage)}_to_{safe_float_label(next_stage)}_p{prefix}"
+    carried.update(
+        {
+            "candidate_id": carry_id,
+            "parent_candidate_id": parent_id,
+            "carry_source": "pas-lookahead",
+            "carry_prefix_step": prefix,
+            "carry_from_stage": stage,
+            "carry_to_stage": next_stage,
+            "policy_path": probe_row.get("policy_plus_path", carried.get("policy_path", "")),
+            "current_sparsity": as_float(probe_row.get("actual_sparsity_plus"), next_stage),
+            "target_sparsity": next_stage,
+            "endpoint_logppl": as_float(probe_row.get("logppl_plus")),
+            "endpoint_ppl": as_float(probe_row.get("ppl_plus")),
+            "step": prefix,
+            "selection_reason": "pas_carry_forward",
+        }
+    )
+    return carried
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Offline Progressive PAS lookahead replay")
     parser.add_argument("--model", required=True)
@@ -277,12 +309,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix-steps", default="300,500,700,1000,1500,2000,5000")
     parser.add_argument("--stage-window", type=float, default=0.015)
     parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--min-prefix-step", type=int, default=0,
+                        help="Do not run promotion checks before this search prefix.")
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=0.02)
     parser.add_argument("--promotion-mode", choices=["simple", "strict"], default="simple",
                         help="simple: enough candidates and PAS improves next stage; strict: also require endpoint_price <= epsilon.")
     parser.add_argument("--promotion-min-candidates", type=int, default=0,
                         help="Minimum candidates near a stage before the PAS promotion gate can advance. Default: top-k.")
+    parser.add_argument("--carry-forward-mode", choices=["none", "pas", "all"], default="pas",
+                        help="Whether lookahead-projected next-stage candidates are added to later stage pools.")
     parser.add_argument("--projection-mode", default="nested_from_base", choices=["nested_from_base", "current"])
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--gpu-ids", default="0")
@@ -314,7 +350,8 @@ def main() -> int:
             "candidate pool mismatch: expected candidate_id containing "
             f"{expected_prefix!r}, saw {bad_ids[:5]!r}; source={source_path}"
         )
-    candidates_by_id = {row["candidate_id"]: row for row in candidates}
+    replay_candidates = list(candidates)
+    candidates_by_id = {row["candidate_id"]: row for row in replay_candidates}
     stages = parse_float_list(args.stages)
     prefixes = parse_int_list(args.prefix_steps)
     if len(stages) < 2:
@@ -332,11 +369,17 @@ def main() -> int:
         "candidate_source": str(source_path),
         "stage_expansions": [],
         "skipped": [],
+        "carried_candidates": [],
         "regret40_note": "Regret40 is computed against the best L40 among the selected rules for each prefix/stage.",
     }
 
     for prefix in prefixes:
-        prefix_candidates = [row for row in candidates if as_int(row.get("step")) <= prefix]
+        if prefix < args.min_prefix_step:
+            manifest["skipped"].append(
+                {"prefix_step": prefix, "reason": f"prefix<{args.min_prefix_step}"}
+            )
+            continue
+        prefix_candidates = [row for row in replay_candidates if as_int(row.get("step")) <= prefix]
         search_endpoint_evals = len(prefix_candidates)
         for stage, next_stage in zip(stages[:-1], stages[1:]):
             window = args.stage_window
@@ -397,6 +440,37 @@ def main() -> int:
             promotion_decision = "PROMOTE" if not hold_reasons else "HOLD"
             online_gate_probe_evals = 3 * len(top_candidates)
 
+            if promotion_decision == "PROMOTE":
+                carry_source_rows = []
+                if args.carry_forward_mode == "pas":
+                    carry_source_rows = [pas_selected]
+                elif args.carry_forward_mode == "all":
+                    carry_source_rows = stage_rows
+                for carry_row in carry_source_rows:
+                    parent = candidates_by_id.get(carry_row["candidate_id"])
+                    if not parent:
+                        continue
+                    carried = make_carried_candidate(
+                        candidate=parent,
+                        probe_row=carry_row,
+                        prefix=prefix,
+                        stage=stage,
+                        next_stage=next_stage,
+                    )
+                    if carried["candidate_id"] not in candidates_by_id:
+                        replay_candidates.append(carried)
+                        prefix_candidates.append(carried)
+                        candidates_by_id[carried["candidate_id"]] = carried
+                        manifest["carried_candidates"].append(
+                            {
+                                "prefix_step": prefix,
+                                "from_stage": stage,
+                                "to_stage": next_stage,
+                                "parent_candidate_id": carry_row["candidate_id"],
+                                "carried_candidate_id": carried["candidate_id"],
+                            }
+                        )
+
             rule_items = [
                 ("FF-stage-endpoint", endpoint, False),
                 ("PAS-lookahead", pas_selected, gate_passed),
@@ -441,6 +515,7 @@ def main() -> int:
                 "promotion_min_candidates": promotion_min_candidates,
                 "stage_window": window,
                 "stage_window_expanded": expanded,
+                "carry_forward_mode": args.carry_forward_mode,
                 "endpoint_candidate": endpoint.get("candidate_id", ""),
                 "endpoint_L_stage": endpoint.get("logppl_zero", ""),
                 "endpoint_L_next": endpoint.get("logppl_plus", ""),
@@ -489,6 +564,7 @@ def main() -> int:
                         "promotion_hold_reason": ";".join(hold_reasons) if rule == "PAS-lookahead" else "",
                         "promotion_min_candidates": promotion_min_candidates if rule == "PAS-lookahead" else "",
                         "promotion_candidate_count": len(stage_candidates) if rule == "PAS-lookahead" else "",
+                        "carry_forward_mode": args.carry_forward_mode if rule == "PAS-lookahead" else "",
                         "online_gate_probe_evals": online_gate_probe_evals if rule == "PAS-lookahead" else "",
                         "analysis_final_probe_evals": analysis_final_probe_evals if rule == "PAS-lookahead" else "",
                         "episodes_saved_vs_full_prefix": max_prefix - prefix if rule == "PAS-lookahead" else "",
@@ -524,6 +600,10 @@ def main() -> int:
         handle.write(f"- candidate source: `{source_path}`\n")
         handle.write(f"- prefixes: `{args.prefix_steps}`\n")
         handle.write(f"- stages: `{args.stages}`\n")
+        handle.write(f"- lookahead top-k: `{args.top_k}`\n")
+        handle.write(f"- min prefix step: `{args.min_prefix_step}`\n")
+        handle.write(f"- promotion mode: `{args.promotion_mode}`\n")
+        handle.write(f"- carry-forward mode: `{args.carry_forward_mode}`\n")
         handle.write(f"- gpu ids: `{args.gpu_ids}`\n\n")
         handle.write("## Selection Rows\n\n")
         handle.write(f"- rows: `{len(selection_rows)}`\n")
