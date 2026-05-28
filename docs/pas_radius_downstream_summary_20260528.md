@@ -1,6 +1,6 @@
 # PAS Radius/Downstream Evidence Summary 2026-05-28
 
-Generated on server at `2026-05-28 11:43:15`.
+Generated on server at `2026-05-28 11:45:09`.
 
 Main interpretation:
 
@@ -10,35 +10,29 @@ Main interpretation:
 
 ## Downstream Correlation
 
-| model | seed | metric | pearson | spearman | partial_corr_given_L30 |
-| --- | --- | --- | --- | --- | --- |
-| OPT-1.3B | 4025 | S3025 | 18 | -0.441862 | -0.432558 |
-| OPT-1.3B | 4025 | S3050 | 18 | -0.169838 | -0.399794 |
-| OPT-1.3B | 4025 | S31 | 18 | 0.0526308 | -0.0640496 |
-| OPT-1.3B | 4025 | S35 | 18 | 0.373123 | 0.355372 |
-| OPT-1.3B | 5025 | S3025 | 0.160791 | 0.047163 | 0.165183 |
-| OPT-1.3B | 5025 | S3050 | 0.0940579 | 0.116434 | 0.101779 |
-| OPT-1.3B | 5025 | S31 | -0.0248149 | -0.0869567 | -0.0312283 |
-| OPT-1.3B | 5025 | S35 | 0.0482882 | -0.0235815 | 0.0500476 |
-| OPT-2.7B | 7025 | S3025 | 0.0866025 | -0.141018 | 0.103274 |
-| OPT-2.7B | 7025 | S3050 | -0.00528905 | -0.131208 | -0.01613 |
-| OPT-2.7B | 7025 | S31 | 0.0413671 | -0.0784795 | -0.0725508 |
-| OPT-2.7B | 7025 | S35 | 0.54691 | 0.513795 | 0.513329 |
-| OPT-2.7B | 8025 | S3025 | 0.163789 | 0.0919898 | 0.135636 |
-| OPT-2.7B | 8025 | S3050 | 0.297231 | 0.240827 | 0.272393 |
-| OPT-2.7B | 8025 | S31 | 0.257258 | 0.122998 | 0.243953 |
-| OPT-2.7B | 8025 | S35 | 0.705486 | 0.546771 | 0.702734 |
+| model | seed | metric | n | pearson | spearman | partial_corr_given_L30 |
+| --- | --- | --- | --- | --- | --- | --- |
+| OPT-1.3B | 4025 | S3025 | 18 | -0.441862 | -0.432558 | -0.493158 |
+| OPT-1.3B | 4025 | S3050 | 18 | -0.169838 | -0.399794 | -0.174775 |
+| OPT-1.3B | 4025 | S31 | 18 | 0.0526308 | -0.0640496 | 0.0106061 |
+| OPT-1.3B | 4025 | S35 | 18 | 0.373123 | 0.355372 | 0.364202 |
+| OPT-1.3B | 5025 | S3025 |  | 0.160791 | 0.047163 | 0.165183 |
+| OPT-1.3B | 5025 | S3050 |  | 0.0940579 | 0.116434 | 0.101779 |
+| OPT-1.3B | 5025 | S31 |  | -0.0248149 | -0.0869567 | -0.0312283 |
+| OPT-1.3B | 5025 | S35 |  | 0.0482882 | -0.0235815 | 0.0500476 |
+| OPT-2.7B | 7025 | S3025 |  | 0.0866025 | -0.141018 | 0.103274 |
+| OPT-2.7B | 7025 | S3050 |  | -0.00528905 | -0.131208 | -0.01613 |
+| OPT-2.7B | 7025 | S31 |  | 0.0413671 | -0.0784795 | -0.0725508 |
+| OPT-2.7B | 7025 | S35 |  | 0.54691 | 0.513795 | 0.513329 |
+| OPT-2.7B | 8025 | S3025 |  | 0.163789 | 0.0919898 | 0.135636 |
+| OPT-2.7B | 8025 | S3050 |  | 0.297231 | 0.240827 | 0.272393 |
+| OPT-2.7B | 8025 | S31 |  | 0.257258 | 0.122998 | 0.243953 |
+| OPT-2.7B | 8025 | S35 |  | 0.705486 | 0.546771 | 0.702734 |
 
 ## Selection Summary
 
 | model | seed | rule | step | avg_pruned_score | L30 | S3025 | S3050 | S31 | S35 | L40 | Regret40 | candidate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| OPT-1.3B | 4025 | FF-Endpoint | 789 | 3.52455 | 33.9386 | 0.013393 | 0.0290179 | 0.064732 | 0.439732 | 4.60714 | 100.197 | 0.359375 |
-| OPT-1.3B | 4025 | PAS-S3025 | 708 | 3.63393 | 37.8613 | -0.0178571 | -0.00892861 | 0.00446413 | 0.620536 | 4.90625 | 135.132 | 0.658482 |
-| OPT-1.3B | 4025 | PAS-S3050 | 714 | 3.81473 | 45.3646 | -0.013393 | -0.017857 | 0.189732 | 0.792411 | 5.68304 | 293.84 | 1.43527 |
-| OPT-1.3B | 4025 | PAS-S31 | 683 | 3.90625 | 49.7122 | 0.033482 | 0.0111605 | -0.00223235 | 0.741071 | 5.84375 | 345.071 | 1.59598 |
-| OPT-1.3B | 4025 | PAS-S35 | 494 | 3.81696 | 45.466 | 0.0066965 | 0.0200894 | 0.0647323 | 0.149554 | 4.3683 | 78.9097 | 0.120536 |
-| OPT-1.3B | 4025 | Oracle40 | 648 | 3.68973 | 40.0341 | 0.0133929 | 0.0133929 | 0.049107 | 0.238839 | 4.24777 | 69.9491 | 0 |
 | OPT-1.3B | 4025 | FF-Endpoint | 789 | 0.448333 | 3.52455 | 0.013393 | 0.0290179 | 0.064732 | 0.439732 | 4.60714 | 0.359375 | opt-1.3b_seed4025_step000789_ep000789 |
 | OPT-1.3B | 4025 | PAS-S3025 | 708 | 0.483333 | 3.63393 | -0.0178571 | -0.00892861 | 0.00446413 | 0.620536 | 4.90625 | 0.658482 | opt-1.3b_seed4025_step000708_ep000708 |
 | OPT-1.3B | 4025 | PAS-S3050 | 714 | 0.505 | 3.81473 | -0.013393 | -0.017857 | 0.189732 | 0.792411 | 5.68304 | 1.43527 | opt-1.3b_seed4025_step000714_ep000714 |
@@ -67,16 +61,16 @@ Main interpretation:
 
 | setting | label | repo copy | source artifact |
 | --- | --- | --- | --- |
-| opt13b_seed4025 | path30_35_40 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/path30_35_40.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_path30_35_40_fixed5_no6/path30_35_40_fixed5_summary.md` |
-| opt13b_seed4025 | local_radius_vs_40 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/local_radius_vs_40.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_local_radius_fixed5_no6/local_radius_vs_40_fixed5.md` |
-| opt13b_seed4025 | downstream30 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/downstream30.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_downstream30_local_radius_fixed5_no6/local_radius_downstream30_table.md` |
-| opt13b_seed5025 | final | `docs/pas_radius_downstream_20260528/opt13b_seed5025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed5025_ff1000_growth_rep1/FINAL_SUMMARY.md` |
-| opt27b_seed7025 | final | `docs/pas_radius_downstream_20260528/opt27b_seed7025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-2.7b_seed7025_ff1000_growth_rep1/FINAL_SUMMARY.md` |
-| opt27b_seed8025 | final | `docs/pas_radius_downstream_20260528/opt27b_seed8025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-2.7b_seed8025_ff1000_growth_rep1/FINAL_SUMMARY.md` |
-| formal_tables | formal_summary | `docs/pas_radius_downstream_20260528/formal_tables_20260525/formal_summary.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/summary.md` |
-| formal_tables | endpoint_ambiguity | `docs/pas_radius_downstream_20260528/formal_tables_20260525/endpoint_ambiguity.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_endpoint_ambiguity_table.md` |
-| formal_tables | stress_correlation | `docs/pas_radius_downstream_20260528/formal_tables_20260525/stress_correlation.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_stress_correlation_table.md` |
-| formal_tables | selection_value | `docs/pas_radius_downstream_20260528/formal_tables_20260525/selection_value.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_selection_value_table.md` |
+| opt13b_seed4025 | path30_35_40 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/path30_35_40.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_path30_35_40_fixed5_no6/path30_35_40_fixed5_summary.md (using existing repo copy)` |
+| opt13b_seed4025 | local_radius_vs_40 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/local_radius_vs_40.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_local_radius_fixed5_no6/local_radius_vs_40_fixed5.md (using existing repo copy)` |
+| opt13b_seed4025 | downstream30 | `docs/pas_radius_downstream_20260528/opt13b_seed4025/downstream30.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed4025_ff1000_growth_downstream30_local_radius_fixed5_no6/local_radius_downstream30_table.md (using existing repo copy)` |
+| opt13b_seed5025 | final | `docs/pas_radius_downstream_20260528/opt13b_seed5025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-1.3b_seed5025_ff1000_growth_rep1/FINAL_SUMMARY.md (using existing repo copy)` |
+| opt27b_seed7025 | final | `docs/pas_radius_downstream_20260528/opt27b_seed7025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-2.7b_seed7025_ff1000_growth_rep1/FINAL_SUMMARY.md (using existing repo copy)` |
+| opt27b_seed8025 | final | `docs/pas_radius_downstream_20260528/opt27b_seed8025/final.md` | `/workspace/ckpts/pas_informative_radius/opt-2.7b_seed8025_ff1000_growth_rep1/FINAL_SUMMARY.md (using existing repo copy)` |
+| formal_tables | formal_summary | `docs/pas_radius_downstream_20260528/formal_tables_20260525/formal_summary.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/summary.md (using existing repo copy)` |
+| formal_tables | endpoint_ambiguity | `docs/pas_radius_downstream_20260528/formal_tables_20260525/endpoint_ambiguity.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_endpoint_ambiguity_table.md (using existing repo copy)` |
+| formal_tables | stress_correlation | `docs/pas_radius_downstream_20260528/formal_tables_20260525/stress_correlation.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_stress_correlation_table.md (using existing repo copy)` |
+| formal_tables | selection_value | `docs/pas_radius_downstream_20260528/formal_tables_20260525/selection_value.md` | `/workspace/ckpts/pas_informative_radius/paper_formal_tables_20260525/paper_selection_value_table.md (using existing repo copy)` |
 
 ## Candidate Prefix Check
 

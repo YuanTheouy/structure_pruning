@@ -114,16 +114,23 @@ def repo_root() -> Path:
     raise RuntimeError("Could not find repo root")
 
 
-def parse_table_rows(section_text: str) -> list[list[str]]:
+def parse_markdown_table(section_text: str) -> tuple[list[str], list[list[str]]]:
+    header: list[str] = []
     rows: list[list[str]] = []
     for line in section_text.splitlines():
         stripped = line.strip()
-        if not stripped.startswith("|") or "---" in stripped:
+        if not stripped.startswith("|"):
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if cells and cells[0] not in {"rule", "metric", "rank"}:
-            rows.append(cells)
-    return rows
+        if not cells:
+            continue
+        if all(set(cell) <= {"-", " "} for cell in cells):
+            continue
+        if not header:
+            header = cells
+            continue
+        rows.append(cells)
+    return header, rows
 
 
 def extract_section(text: str, title: str) -> str:
@@ -155,6 +162,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default="docs/pas_radius_downstream_20260528")
     parser.add_argument("--summary", default="docs/pas_radius_downstream_summary_20260528.md")
+    parser.add_argument(
+        "--use-existing-copies",
+        action="store_true",
+        help="Regenerate the summary from files already copied under --output-dir if /workspace sources are unavailable.",
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -172,7 +184,11 @@ def main() -> int:
         for label, source in setting["sources"]:
             src = Path(source)
             dest = out_dir / setting["key"] / f"{label}.md"
-            if not copy_source(src, dest):
+            if copy_source(src, dest):
+                source_note = source
+            elif args.use_existing_copies and dest.exists():
+                source_note = f"{source} (using existing repo copy)"
+            else:
                 missing.append(
                     {
                         "setting": setting["key"],
@@ -197,7 +213,7 @@ def main() -> int:
                 {
                     "setting": setting["key"],
                     "label": label,
-                    "source": source,
+                    "source": source_note,
                     "dest": str(dest.relative_to(root)),
                 }
             )
@@ -205,8 +221,9 @@ def main() -> int:
             corr = extract_section(text, "Correlation With Downstream@30")
             if not corr:
                 corr = extract_section(text, "Correlation")
-            for cells in parse_table_rows(corr):
-                if len(cells) >= 4 and cells[0].startswith("S"):
+            _, corr_rows = parse_markdown_table(corr)
+            for cells in corr_rows:
+                if len(cells) >= 5 and cells[0].startswith("S") and cells[1].isdigit():
                     correlation_rows.append(
                         [
                             setting["model"],
@@ -215,12 +232,27 @@ def main() -> int:
                             cells[1],
                             cells[2],
                             cells[3],
+                            cells[4],
+                        ]
+                    )
+                elif len(cells) >= 4 and cells[0].startswith("S"):
+                    correlation_rows.append(
+                        [
+                            setting["model"],
+                            setting["seed"],
+                            cells[0],
+                            "",
+                            cells[1],
+                            cells[2],
+                            cells[3],
                         ]
                     )
 
             selection = extract_section(text, "Selection Summary")
-            for cells in parse_table_rows(selection):
-                if len(cells) >= 11 and not cells[0].startswith("Oracle-Downstream"):
+            selection_header, parsed_selection_rows = parse_markdown_table(selection)
+            has_downstream_score = "avg_pruned_score" in selection_header
+            for cells in parsed_selection_rows:
+                if has_downstream_score and len(cells) >= 11 and not cells[0].startswith("Oracle-Downstream"):
                     selection_rows.append(
                         [
                             setting["model"],
@@ -233,16 +265,22 @@ def main() -> int:
         src = Path(source)
         dest = out_dir / "formal_tables_20260525" / f"{label}.md"
         if copy_source(src, dest):
+            source_note = source
+        elif args.use_existing_copies and dest.exists():
+            source_note = f"{source} (using existing repo copy)"
+        else:
+            missing.append({"setting": "formal_tables", "label": label, "source": source})
+            continue
+
+        if dest.exists():
             copied.append(
                 {
                     "setting": "formal_tables",
                     "label": label,
-                    "source": source,
+                    "source": source_note,
                     "dest": str(dest.relative_to(root)),
                 }
             )
-        else:
-            missing.append({"setting": "formal_tables", "label": label, "source": source})
 
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = []
@@ -260,8 +298,8 @@ def main() -> int:
     lines.append("## Downstream Correlation")
     lines.append("")
     if correlation_rows:
-        lines.append("| model | seed | metric | pearson | spearman | partial_corr_given_L30 |")
-        lines.append("| --- | --- | --- | --- | --- | --- |")
+        lines.append("| model | seed | metric | n | pearson | spearman | partial_corr_given_L30 |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
         for row in correlation_rows:
             lines.append("| " + " | ".join(row) + " |")
     else:
