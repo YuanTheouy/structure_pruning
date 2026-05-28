@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -39,6 +40,19 @@ def safe_float_label(value: float) -> str:
 
 def choose_min(rows: list[dict[str, str]], key: str) -> dict[str, str]:
     return min(rows, key=lambda row: (num(row.get(key)), num(row.get("logppl_zero")), row.get("candidate_id", "")))
+
+
+def row_key(row: dict[str, str]) -> tuple[int, float]:
+    return (int(num(row.get("prefix_step"), -1)), round(num(row.get("stage")), 6))
+
+
+def short_candidate(candidate_id: str) -> str:
+    if not candidate_id:
+        return ""
+    match = re.search(r"step0*([0-9]+)", candidate_id)
+    if match:
+        return f"step{match.group(1)}"
+    return candidate_id[-28:]
 
 
 def infer_pas_raw(replay_dir: Path, row: dict[str, str], epsilon: float) -> dict[str, str]:
@@ -90,14 +104,11 @@ def main() -> int:
     final_probe_csvs = sorted((replay_dir / "final_probes").glob("*/probe_results.csv"))
 
     promotion = [infer_pas_raw(replay_dir, row, args.epsilon) for row in read_csv(promotion_csv)]
-    promotion_by_key = {
-        (row.get("prefix_step", ""), row.get("stage", "")): row
-        for row in promotion
-    }
+    promotion_by_key = {row_key(row): row for row in promotion}
     selection = []
     for row in read_csv(selection_csv):
         if row.get("rule") == "PAS-lookahead" and not row.get("pas_raw_candidate"):
-            promo = promotion_by_key.get((row.get("prefix_step", ""), row.get("stage", "")), {})
+            promo = promotion_by_key.get(row_key(row), {})
             row = dict(row)
             for key in ("pas_raw_candidate", "pas_raw_L_stage", "pas_raw_L_next", "pas_raw_endpoint_price", "pas_raw_lookahead_gain"):
                 if promo.get(key):
@@ -108,19 +119,70 @@ def main() -> int:
     prefixes = sorted({int(num(row.get("prefix_step"), -1)) for row in promotion if num(row.get("prefix_step"), -1) >= 0})
     stages = sorted({num(row.get("stage")) for row in promotion if math.isfinite(num(row.get("stage")))})
     decisions = Counter(row.get("promotion_decision", "") for row in promotion)
+    promote_count = decisions.get("PROMOTE", 0)
+    hold_count = decisions.get("HOLD", 0)
+    raw_improvements = [
+        row for row in promotion
+        if num(row.get("pas_raw_lookahead_gain", row.get("lookahead_gain", ""))) > 0
+    ]
+    best_raw = max(
+        promotion,
+        key=lambda row: num(row.get("pas_raw_lookahead_gain", row.get("lookahead_gain", "")), float("-inf")),
+        default={},
+    )
+    if promote_count:
+        verdict = "PAS has triggered at least one promotion."
+    elif raw_improvements:
+        verdict = "PAS has raw lookahead improvements, but no promotion yet."
+    elif promotion:
+        verdict = "No PAS acceleration signal yet: raw PAS keeps matching FF endpoint."
+    else:
+        verdict = "No promotion checks completed yet."
 
     with out_path.open("w", encoding="utf-8") as handle:
         handle.write("# Progressive PAS Partial Report\n\n")
+        handle.write("## Simple Verdict\n\n")
+        handle.write(f"- verdict: **{verdict}**\n")
+        handle.write(f"- completed gate checks: `{len(promotion)}`\n")
+        handle.write(f"- decisions: `PROMOTE={promote_count}`, `HOLD={hold_count}`\n")
+        handle.write(f"- raw PAS improvements: `{len(raw_improvements)}`\n")
+        handle.write(
+            f"- best raw gain so far: `{fmt(best_raw.get('pas_raw_lookahead_gain', best_raw.get('lookahead_gain', '')))}"
+            f"` at prefix `{best_raw.get('prefix_step', '')}`, stage `{fmt(best_raw.get('stage', ''))}`\n"
+        )
+        handle.write(f"- completed probe batches: `{len(probe_csvs) + len(final_probe_csvs)}` / `{args.expected_batches}`\n")
+        handle.write(f"- prefixes seen: `{','.join(map(str, prefixes))}`\n\n")
+
+        handle.write("## Compact Gate Table\n\n")
+        compact_rows = []
+        for row in sorted(promotion, key=lambda r: (num(r.get("prefix_step")), num(r.get("stage")))):
+            raw_gain = num(row.get("pas_raw_lookahead_gain", row.get("lookahead_gain", "")))
+            compact_rows.append(
+                [
+                    row.get("prefix_step", ""),
+                    f"{fmt(row.get('stage', ''))}->{fmt(row.get('next_stage', ''))}",
+                    row.get("promotion_decision", ""),
+                    fmt(raw_gain),
+                    short_candidate(row.get("pas_raw_candidate", "")),
+                    short_candidate(row.get("pas_candidate", "")),
+                    row.get("hold_reason", ""),
+                ]
+            )
+        write_table(
+            handle,
+            ["prefix", "stage", "decision", "raw_gain", "raw", "selected", "why_hold"],
+            compact_rows,
+        )
+        handle.write("\n")
+
+        handle.write("## Run Progress\n\n")
         handle.write(f"- replay_dir: `{replay_dir}`\n")
-        handle.write(f"- probe batches done: `{len(probe_csvs) + len(final_probe_csvs)}` / `{args.expected_batches}`\n")
         handle.write(f"- stage probe batches: `{len(probe_csvs)}`\n")
         handle.write(f"- final probe batches: `{len(final_probe_csvs)}`\n")
-        handle.write(f"- promotion rows: `{len(promotion)}`\n")
         handle.write(f"- selection rows: `{len(selection)}`\n")
-        handle.write(f"- prefixes seen: `{','.join(map(str, prefixes))}`\n")
         handle.write(f"- stages seen: `{','.join(fmt(s) for s in stages)}`\n\n")
 
-        handle.write("## Promotion Decisions\n\n")
+        handle.write("## Decision Counts\n\n")
         write_table(
             handle,
             ["decision", "count"],
@@ -128,7 +190,7 @@ def main() -> int:
         )
         handle.write("\n")
 
-        handle.write("## Promotion Gate Rows\n\n")
+        handle.write("## Detailed Gate Rows\n\n")
         promo_rows = []
         for row in sorted(promotion, key=lambda r: (num(r.get("prefix_step")), num(r.get("stage")))):
             promo_rows.append(
@@ -142,11 +204,11 @@ def main() -> int:
                     row.get("online_gate_probe_evals", ""),
                     fmt(row.get("pas_raw_endpoint_price", row.get("endpoint_price", ""))),
                     fmt(row.get("pas_raw_lookahead_gain", row.get("lookahead_gain", ""))),
-                    row.get("pas_raw_candidate", ""),
+                    short_candidate(row.get("pas_raw_candidate", "")),
                     fmt(row.get("endpoint_price", "")),
                     fmt(row.get("lookahead_gain", "")),
                     row.get("hold_reason", ""),
-                    row.get("pas_candidate", ""),
+                    short_candidate(row.get("pas_candidate", "")),
                 ]
             )
         write_table(
@@ -169,12 +231,12 @@ def main() -> int:
                         fmt(row.get("stage", "")),
                         row.get("rule", ""),
                         row.get("promotion_decision", ""),
-                        row.get("pas_raw_candidate", ""),
+                        short_candidate(row.get("pas_raw_candidate", "")),
                         fmt(row.get("pas_raw_lookahead_gain", "")),
                         fmt(row.get("L30", "")),
                         fmt(row.get("L40", "")),
                         fmt(row.get("Regret40", "")),
-                        row.get("candidate_id", ""),
+                        short_candidate(row.get("candidate_id", "")),
                     ]
                 )
             write_table(
