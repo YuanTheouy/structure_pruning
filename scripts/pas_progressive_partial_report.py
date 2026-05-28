@@ -33,6 +33,41 @@ def fmt(value) -> str:
     return f"{value:.6g}"
 
 
+def safe_float_label(value: float) -> str:
+    return f"{value:.4f}".replace(".", "p")
+
+
+def choose_min(rows: list[dict[str, str]], key: str) -> dict[str, str]:
+    return min(rows, key=lambda row: (num(row.get(key)), num(row.get("logppl_zero")), row.get("candidate_id", "")))
+
+
+def infer_pas_raw(replay_dir: Path, row: dict[str, str], epsilon: float) -> dict[str, str]:
+    if row.get("pas_raw_candidate"):
+        return row
+    prefix = int(num(row.get("prefix_step"), -1))
+    stage = num(row.get("stage"))
+    next_stage = num(row.get("next_stage"))
+    if prefix < 0 or not math.isfinite(stage) or not math.isfinite(next_stage):
+        return row
+    label = f"prefix{prefix}_stage{safe_float_label(stage)}_to_{safe_float_label(next_stage)}"
+    probe_rows = read_csv(replay_dir / "probes" / label / "probe_results.csv")
+    if not probe_rows:
+        return row
+    endpoint = choose_min(probe_rows, "logppl_zero")
+    endpoint_l = num(endpoint.get("logppl_zero"))
+    band = [probe_row for probe_row in probe_rows if num(probe_row.get("logppl_zero")) <= endpoint_l + epsilon]
+    if not band:
+        band = [endpoint]
+    pas_raw = choose_min(band, "logppl_plus")
+    row = dict(row)
+    row["pas_raw_candidate"] = pas_raw.get("candidate_id", "")
+    row["pas_raw_L_stage"] = pas_raw.get("logppl_zero", "")
+    row["pas_raw_L_next"] = pas_raw.get("logppl_plus", "")
+    row["pas_raw_endpoint_price"] = str(num(pas_raw.get("logppl_zero")) - endpoint_l)
+    row["pas_raw_lookahead_gain"] = str(num(endpoint.get("logppl_plus")) - num(pas_raw.get("logppl_plus")))
+    return row
+
+
 def write_table(handle, headers: list[str], rows: list[list[object]]) -> None:
     handle.write("| " + " | ".join(headers) + " |\n")
     handle.write("| " + " | ".join(["---"] * len(headers)) + " |\n")
@@ -44,6 +79,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Write a partial Progressive PAS replay report")
     parser.add_argument("replay_dir", help="Replay directory containing progressive_pas_*.csv files")
     parser.add_argument("--expected-batches", type=int, default=60)
+    parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
@@ -53,8 +89,20 @@ def main() -> int:
     probe_csvs = sorted((replay_dir / "probes").glob("*/probe_results.csv"))
     final_probe_csvs = sorted((replay_dir / "final_probes").glob("*/probe_results.csv"))
 
-    selection = read_csv(selection_csv)
-    promotion = read_csv(promotion_csv)
+    promotion = [infer_pas_raw(replay_dir, row, args.epsilon) for row in read_csv(promotion_csv)]
+    promotion_by_key = {
+        (row.get("prefix_step", ""), row.get("stage", "")): row
+        for row in promotion
+    }
+    selection = []
+    for row in read_csv(selection_csv):
+        if row.get("rule") == "PAS-lookahead" and not row.get("pas_raw_candidate"):
+            promo = promotion_by_key.get((row.get("prefix_step", ""), row.get("stage", "")), {})
+            row = dict(row)
+            for key in ("pas_raw_candidate", "pas_raw_L_stage", "pas_raw_L_next", "pas_raw_endpoint_price", "pas_raw_lookahead_gain"):
+                if promo.get(key):
+                    row[key] = promo[key]
+        selection.append(row)
     out_path = Path(args.output) if args.output else replay_dir / "progressive_pas_partial_report.md"
 
     prefixes = sorted({int(num(row.get("prefix_step"), -1)) for row in promotion if num(row.get("prefix_step"), -1) >= 0})
@@ -92,6 +140,9 @@ def main() -> int:
                     row.get("promotion_decision", ""),
                     row.get("episodes_saved_vs_full_prefix", ""),
                     row.get("online_gate_probe_evals", ""),
+                    fmt(row.get("pas_raw_endpoint_price", row.get("endpoint_price", ""))),
+                    fmt(row.get("pas_raw_lookahead_gain", row.get("lookahead_gain", ""))),
+                    row.get("pas_raw_candidate", ""),
                     fmt(row.get("endpoint_price", "")),
                     fmt(row.get("lookahead_gain", "")),
                     row.get("hold_reason", ""),
@@ -100,7 +151,7 @@ def main() -> int:
             )
         write_table(
             handle,
-            ["prefix", "stage", "next", "mode", "decision", "saved_eps", "probe_evals", "endpoint_price", "lookahead_gain", "hold_reason", "pas_candidate"],
+            ["prefix", "stage", "next", "mode", "decision", "saved_eps", "probe_evals", "raw_price", "raw_gain", "raw_candidate", "selected_price", "selected_gain", "hold_reason", "selected_candidate"],
             promo_rows,
         )
         handle.write("\n")
@@ -118,6 +169,8 @@ def main() -> int:
                         fmt(row.get("stage", "")),
                         row.get("rule", ""),
                         row.get("promotion_decision", ""),
+                        row.get("pas_raw_candidate", ""),
+                        fmt(row.get("pas_raw_lookahead_gain", "")),
                         fmt(row.get("L30", "")),
                         fmt(row.get("L40", "")),
                         fmt(row.get("Regret40", "")),
@@ -126,7 +179,7 @@ def main() -> int:
                 )
             write_table(
                 handle,
-                ["prefix", "stage", "rule", "promote", "L30", "L40", "Regret40", "candidate"],
+                ["prefix", "stage", "rule", "promote", "pas_raw_candidate", "pas_raw_gain", "L30", "L40", "Regret40", "candidate"],
                 table_rows,
             )
             handle.write("\n")

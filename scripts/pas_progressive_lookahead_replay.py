@@ -521,6 +521,10 @@ def main() -> int:
                 "endpoint_L_next": endpoint.get("logppl_plus", ""),
                 "pas_candidate": pas_selected.get("candidate_id", ""),
                 "pas_raw_candidate": pas_raw.get("candidate_id", ""),
+                "pas_raw_L_stage": pas_raw.get("logppl_zero", ""),
+                "pas_raw_L_next": pas_raw.get("logppl_plus", ""),
+                "pas_raw_endpoint_price": as_float(pas_raw.get("logppl_zero")) - endpoint_L,
+                "pas_raw_lookahead_gain": as_float(endpoint.get("logppl_plus")) - as_float(pas_raw.get("logppl_plus")),
                 "pas_L_stage": pas_selected.get("logppl_zero", ""),
                 "pas_L_next": pas_selected.get("logppl_plus", ""),
                 "endpoint_price": endpoint_price,
@@ -562,6 +566,11 @@ def main() -> int:
                         "promotion_decision": promotion_decision if rule == "PAS-lookahead" else "",
                         "promotion_mode": args.promotion_mode if rule == "PAS-lookahead" else "",
                         "promotion_hold_reason": ";".join(hold_reasons) if rule == "PAS-lookahead" else "",
+                        "pas_raw_candidate": pas_raw.get("candidate_id", "") if rule == "PAS-lookahead" else "",
+                        "pas_raw_L_stage": pas_raw.get("logppl_zero", "") if rule == "PAS-lookahead" else "",
+                        "pas_raw_L_next": pas_raw.get("logppl_plus", "") if rule == "PAS-lookahead" else "",
+                        "pas_raw_endpoint_price": as_float(pas_raw.get("logppl_zero")) - endpoint_L if rule == "PAS-lookahead" else "",
+                        "pas_raw_lookahead_gain": as_float(endpoint.get("logppl_plus")) - as_float(pas_raw.get("logppl_plus")) if rule == "PAS-lookahead" else "",
                         "promotion_min_candidates": promotion_min_candidates if rule == "PAS-lookahead" else "",
                         "promotion_candidate_count": len(stage_candidates) if rule == "PAS-lookahead" else "",
                         "carry_forward_mode": args.carry_forward_mode if rule == "PAS-lookahead" else "",
@@ -610,13 +619,13 @@ def main() -> int:
         handle.write(f"- csv: `{selection_csv}`\n")
         handle.write(f"- cache: `{cache_path}`\n\n")
         handle.write("## PAS Promotion Gate\n\n")
-        handle.write("| prefix | stage | next | mode | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | pas_candidate |\n")
-        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+        handle.write("| prefix | stage | next | mode | decision | saved_eps | gate_probe_evals | raw_gain | raw_candidate | selected_gain | hold_reason | selected_candidate |\n")
+        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
         for row in promotion_rows:
             handle.write(
                 f"| {row['prefix_step']} | {row['stage']} | {row['next_stage']} | "
                 f"{row['promotion_mode']} | {row['promotion_decision']} | {row['episodes_saved_vs_full_prefix']} | "
-                f"{row['online_gate_probe_evals']} | {row['endpoint_price']} | "
+                f"{row['online_gate_probe_evals']} | {row['pas_raw_lookahead_gain']} | {row['pas_raw_candidate']} | "
                 f"{row['lookahead_gain']} | {row['hold_reason']} | {row['pas_candidate']} |\n"
             )
         handle.write("\n")
