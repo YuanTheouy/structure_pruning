@@ -24,6 +24,11 @@ GRADUAL_INITIAL_SPARSITY=${GRADUAL_INITIAL_SPARSITY:-"0.05"}
 GRADUAL_PRUNING_END_EPISODE=${GRADUAL_PRUNING_END_EPISODE:-"1000"}
 CANDIDATE_SAVE_MODE=${CANDIDATE_SAVE_MODE:-"topk_and_periodic"}
 SAVE_EVERY=${SAVE_EVERY:-"25"}
+USE_DATASET_GROWTH=${USE_DATASET_GROWTH:-"false"}
+DATASET_INITIAL_RATIO=${DATASET_INITIAL_RATIO:-"0.05"}
+DATASET_FINAL_RATIO=${DATASET_FINAL_RATIO:-"${DATASET_INITIAL_RATIO}"}
+DATASET_GROWTH_START_EPISODE=${DATASET_GROWTH_START_EPISODE:-"0"}
+DATASET_GROWTH_END_EPISODE=${DATASET_GROWTH_END_EPISODE:-"${TRAIN_EPISODES}"}
 
 RUN_ROOT=${RUN_ROOT:-"${CKPT_ROOT}/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/${RUN_ID}"}
 CANDIDATE_DIR=${CANDIDATE_DIR:-"${RUN_ROOT}/candidates"}
@@ -48,6 +53,24 @@ SAVE_FLAGS=(
 )
 if [[ -n "${SAVE_EVERY}" ]]; then
   SAVE_FLAGS+=(--save_every="${SAVE_EVERY}")
+fi
+
+DATASET_FLAGS=()
+if [[ "${USE_DATASET_GROWTH}" == "true" ]]; then
+  DATASET_FLAGS+=(
+    --use_dataset_growth
+    --dataset_initial_ratio="${DATASET_INITIAL_RATIO}"
+    --dataset_final_ratio="${DATASET_FINAL_RATIO}"
+    --dataset_growth_start_episode="${DATASET_GROWTH_START_EPISODE}"
+    --dataset_growth_end_episode="${DATASET_GROWTH_END_EPISODE}"
+  )
+else
+  DATASET_FLAGS+=(
+    --dataset_initial_ratio="${DATASET_INITIAL_RATIO}"
+    --dataset_final_ratio="${DATASET_FINAL_RATIO}"
+    --dataset_growth_start_episode="${DATASET_GROWTH_START_EPISODE}"
+    --dataset_growth_end_episode="${DATASET_GROWTH_END_EPISODE}"
+  )
 fi
 
 "${PYTHON_BIN}" -u amc_searchPPO.py \
@@ -77,6 +100,7 @@ fi
   --candidate_top_k="${TOP_K}" \
   --candidate_dir="${CANDIDATE_DIR}" \
   --run_id="${RUN_ID}" \
+  "${DATASET_FLAGS[@]}" \
   "${GRADUAL_FLAGS[@]}"
 
 echo "Candidate pool: ${CANDIDATE_DIR}"
