@@ -50,8 +50,8 @@ def main() -> int:
     replay_dir = Path(args.replay_dir)
     selection_csv = replay_dir / "progressive_pas_selection.csv"
     promotion_csv = replay_dir / "progressive_pas_promotion_gate.csv"
-    probe_csvs = sorted((replay_dir / "probes").glob("**/probe_results.csv"))
-    final_probe_csvs = sorted((replay_dir / "final_probes").glob("**/probe_results.csv"))
+    probe_csvs = sorted((replay_dir / "probes").glob("*/probe_results.csv"))
+    final_probe_csvs = sorted((replay_dir / "final_probes").glob("*/probe_results.csv"))
 
     selection = read_csv(selection_csv)
     promotion = read_csv(promotion_csv)
