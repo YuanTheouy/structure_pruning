@@ -279,6 +279,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=0.02)
+    parser.add_argument("--promotion-min-candidates", type=int, default=0,
+                        help="Minimum candidates near a stage before the PAS promotion gate can advance. Default: top-k.")
     parser.add_argument("--projection-mode", default="nested_from_base", choices=["nested_from_base", "current"])
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--gpu-ids", default="0")
@@ -315,10 +317,13 @@ def main() -> int:
     prefixes = parse_int_list(args.prefix_steps)
     if len(stages) < 2:
         raise RuntimeError("--stages must contain at least two values")
+    max_prefix = max(prefixes)
+    promotion_min_candidates = args.promotion_min_candidates if args.promotion_min_candidates > 0 else args.top_k
 
     cache_path = out_dir / "progressive_pas_eval_cache.csv"
     cache_rows = {row["cache_key"]: row for row in read_csv(cache_path) if row.get("cache_key")}
     selection_rows: list[dict] = []
+    promotion_rows: list[dict] = []
     manifest = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "args": vars(args),
@@ -379,6 +384,17 @@ def main() -> int:
             gate_passed = endpoint_price <= args.epsilon and lookahead_gain >= args.margin
             pas_selected = pas_raw if gate_passed else endpoint
 
+            enough_candidates = len(stage_candidates) >= promotion_min_candidates
+            hold_reasons = []
+            if not enough_candidates:
+                hold_reasons.append(f"candidate_count<{promotion_min_candidates}")
+            if not (endpoint_price <= args.epsilon):
+                hold_reasons.append(f"endpoint_price>{args.epsilon:g}")
+            if not (lookahead_gain >= args.margin):
+                hold_reasons.append(f"lookahead_gain<{args.margin:g}")
+            promotion_decision = "PROMOTE" if not hold_reasons else "HOLD"
+            online_gate_probe_evals = 3 * len(top_candidates)
+
             rule_items = [
                 ("FF-stage-endpoint", endpoint, False),
                 ("PAS-lookahead", pas_selected, gate_passed),
@@ -407,7 +423,37 @@ def main() -> int:
             finite_l40 = [as_float(row.get("logppl_plus")) for row in final_rows if is_num(row.get("logppl_plus"))]
             best_l40 = min(finite_l40) if finite_l40 else float("nan")
 
-            extra_probe_evals = 3 * (len(top_candidates) + len(selected_candidates))
+            analysis_final_probe_evals = 3 * len(selected_candidates)
+            extra_probe_evals = online_gate_probe_evals + analysis_final_probe_evals
+            promotion_row = {
+                "model": args.model_name,
+                "seed": args.seed,
+                "prefix_step": prefix,
+                "stage": stage,
+                "next_stage": next_stage,
+                "promotion_decision": promotion_decision,
+                "hold_reason": ";".join(hold_reasons),
+                "candidate_count": len(stage_candidates),
+                "top_k": args.top_k,
+                "promotion_min_candidates": promotion_min_candidates,
+                "stage_window": window,
+                "stage_window_expanded": expanded,
+                "endpoint_candidate": endpoint.get("candidate_id", ""),
+                "endpoint_L_stage": endpoint.get("logppl_zero", ""),
+                "endpoint_L_next": endpoint.get("logppl_plus", ""),
+                "pas_candidate": pas_selected.get("candidate_id", ""),
+                "pas_raw_candidate": pas_raw.get("candidate_id", ""),
+                "pas_L_stage": pas_selected.get("logppl_zero", ""),
+                "pas_L_next": pas_selected.get("logppl_plus", ""),
+                "endpoint_price": endpoint_price,
+                "lookahead_gain": lookahead_gain,
+                "gate_passed": gate_passed,
+                "online_gate_probe_evals": online_gate_probe_evals,
+                "analysis_final_probe_evals": analysis_final_probe_evals,
+                "extra_probe_evals": extra_probe_evals,
+                "episodes_saved_vs_full_prefix": max_prefix - prefix,
+            }
+            promotion_rows.append(promotion_row)
             for rule, row, rule_gate_passed in rule_items:
                 cid = row["candidate_id"]
                 final = final_by_id.get(cid, {})
@@ -435,6 +481,13 @@ def main() -> int:
                         "endpoint_price": endpoint_price if rule == "PAS-lookahead" else "",
                         "lookahead_gain": lookahead_gain if rule == "PAS-lookahead" else "",
                         "gate_passed": rule_gate_passed if rule == "PAS-lookahead" else "",
+                        "promotion_decision": promotion_decision if rule == "PAS-lookahead" else "",
+                        "promotion_hold_reason": ";".join(hold_reasons) if rule == "PAS-lookahead" else "",
+                        "promotion_min_candidates": promotion_min_candidates if rule == "PAS-lookahead" else "",
+                        "promotion_candidate_count": len(stage_candidates) if rule == "PAS-lookahead" else "",
+                        "online_gate_probe_evals": online_gate_probe_evals if rule == "PAS-lookahead" else "",
+                        "analysis_final_probe_evals": analysis_final_probe_evals if rule == "PAS-lookahead" else "",
+                        "episodes_saved_vs_full_prefix": max_prefix - prefix if rule == "PAS-lookahead" else "",
                         "search_endpoint_evals": search_endpoint_evals,
                         "extra_probe_evals": extra_probe_evals,
                         "total_eval_budget": search_endpoint_evals + extra_probe_evals,
@@ -445,6 +498,7 @@ def main() -> int:
 
             write_csv(cache_path, list(cache_rows.values()))
             write_csv(out_dir / "progressive_pas_selection.csv", selection_rows)
+            write_csv(out_dir / "progressive_pas_promotion_gate.csv", promotion_rows)
 
     write_csv(cache_path, list(cache_rows.values()))
     selection_csv = out_dir / "progressive_pas_selection.csv"
@@ -454,6 +508,8 @@ def main() -> int:
             "stage windows, prefix steps, and candidate source."
         )
     write_csv(selection_csv, selection_rows)
+    promotion_csv = out_dir / "progressive_pas_promotion_gate.csv"
+    write_csv(promotion_csv, promotion_rows)
     manifest_path = out_dir / "progressive_pas_manifest.json"
     write_json(manifest_path, manifest)
 
@@ -469,6 +525,17 @@ def main() -> int:
         handle.write(f"- rows: `{len(selection_rows)}`\n")
         handle.write(f"- csv: `{selection_csv}`\n")
         handle.write(f"- cache: `{cache_path}`\n\n")
+        handle.write("## PAS Promotion Gate\n\n")
+        handle.write("| prefix | stage | next | decision | saved_eps | gate_probe_evals | endpoint_price | lookahead_gain | hold_reason | pas_candidate |\n")
+        handle.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+        for row in promotion_rows:
+            handle.write(
+                f"| {row['prefix_step']} | {row['stage']} | {row['next_stage']} | "
+                f"{row['promotion_decision']} | {row['episodes_saved_vs_full_prefix']} | "
+                f"{row['online_gate_probe_evals']} | {row['endpoint_price']} | "
+                f"{row['lookahead_gain']} | {row['hold_reason']} | {row['pas_candidate']} |\n"
+            )
+        handle.write("\n")
         handle.write("## Last-Stage Snapshot\n\n")
         handle.write("| prefix | rule | candidate | L30 | PPL30 | L40 | Regret40 | gate_passed |\n")
         handle.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
@@ -481,6 +548,7 @@ def main() -> int:
                 f"{row['L30']} | {row['PPL30']} | {row['L40']} | {row['Regret40']} | {row['gate_passed']} |\n"
             )
     print(f"WROTE {selection_csv}")
+    print(f"WROTE {promotion_csv}")
     print(f"WROTE {cache_path}")
     print(f"WROTE {md}")
     print(f"WROTE {manifest_path}")
