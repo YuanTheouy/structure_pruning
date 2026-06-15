@@ -313,8 +313,8 @@ def parse_args() -> argparse.Namespace:
                         help="Do not run promotion checks before this search prefix.")
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--margin", type=float, default=0.02)
-    parser.add_argument("--promotion-mode", choices=["simple", "strict"], default="simple",
-                        help="simple: enough candidates and PAS improves next stage; strict: also require endpoint_price <= epsilon.")
+    parser.add_argument("--promotion-mode", choices=["official", "simple", "strict"], default="official",
+                        help="Promotion gate label. simple/strict are accepted as compatibility aliases for the official gate.")
     parser.add_argument("--promotion-min-candidates", type=int, default=0,
                         help="Minimum candidates near a stage before the PAS promotion gate can advance. Default: top-k.")
     parser.add_argument("--carry-forward-mode", choices=["none", "pas", "all"], default="pas",
@@ -423,21 +423,20 @@ def main() -> int:
             band = [row for row in stage_rows if as_float(row.get("logppl_zero")) <= endpoint_L + args.epsilon]
             if not band:
                 band = [endpoint]
+            enough_candidates = len(stage_candidates) >= promotion_min_candidates
             pas_raw = choose_min(band, "logppl_plus")
             endpoint_price = as_float(pas_raw.get("logppl_zero")) - endpoint_L
             lookahead_gain = as_float(endpoint.get("logppl_plus")) - as_float(pas_raw.get("logppl_plus"))
-            gate_passed = endpoint_price <= args.epsilon and lookahead_gain >= args.margin
-            pas_selected = pas_raw if gate_passed else endpoint
-
-            enough_candidates = len(stage_candidates) >= promotion_min_candidates
             hold_reasons = []
             if not enough_candidates:
-                hold_reasons.append(f"candidate_count<{promotion_min_candidates}")
-            if args.promotion_mode == "strict" and not (endpoint_price <= args.epsilon):
-                hold_reasons.append(f"endpoint_price>{args.epsilon:g}")
-            if not (lookahead_gain > args.margin):
-                hold_reasons.append(f"lookahead_gain<={args.margin:g}")
-            promotion_decision = "PROMOTE" if not hold_reasons else "HOLD"
+                hold_reasons.append("candidate_count < promotion_min_candidates")
+            if not (endpoint_price <= args.epsilon):
+                hold_reasons.append("endpoint_price > epsilon")
+            if not (lookahead_gain >= args.margin):
+                hold_reasons.append("lookahead_gain < margin")
+            gate_passed = not hold_reasons
+            promotion_decision = "PROMOTE" if gate_passed else "HOLD"
+            pas_selected = pas_raw if gate_passed else endpoint
             online_gate_probe_evals = 3 * len(top_candidates)
 
             if promotion_decision == "PROMOTE":
@@ -510,6 +509,7 @@ def main() -> int:
                 "promotion_decision": promotion_decision,
                 "promotion_mode": args.promotion_mode,
                 "hold_reason": ";".join(hold_reasons),
+                "enough_candidates": enough_candidates,
                 "candidate_count": len(stage_candidates),
                 "top_k": args.top_k,
                 "promotion_min_candidates": promotion_min_candidates,
@@ -521,6 +521,7 @@ def main() -> int:
                 "endpoint_L_next": endpoint.get("logppl_plus", ""),
                 "pas_candidate": pas_selected.get("candidate_id", ""),
                 "pas_raw_candidate": pas_raw.get("candidate_id", ""),
+                "same_candidate": pas_raw.get("candidate_id", "") == endpoint.get("candidate_id", ""),
                 "pas_raw_L_stage": pas_raw.get("logppl_zero", ""),
                 "pas_raw_L_next": pas_raw.get("logppl_plus", ""),
                 "pas_raw_endpoint_price": as_float(pas_raw.get("logppl_zero")) - endpoint_L,
@@ -567,10 +568,12 @@ def main() -> int:
                         "promotion_mode": args.promotion_mode if rule == "PAS-lookahead" else "",
                         "promotion_hold_reason": ";".join(hold_reasons) if rule == "PAS-lookahead" else "",
                         "pas_raw_candidate": pas_raw.get("candidate_id", "") if rule == "PAS-lookahead" else "",
+                        "same_candidate": pas_raw.get("candidate_id", "") == endpoint.get("candidate_id", "") if rule == "PAS-lookahead" else "",
                         "pas_raw_L_stage": pas_raw.get("logppl_zero", "") if rule == "PAS-lookahead" else "",
                         "pas_raw_L_next": pas_raw.get("logppl_plus", "") if rule == "PAS-lookahead" else "",
                         "pas_raw_endpoint_price": as_float(pas_raw.get("logppl_zero")) - endpoint_L if rule == "PAS-lookahead" else "",
                         "pas_raw_lookahead_gain": as_float(endpoint.get("logppl_plus")) - as_float(pas_raw.get("logppl_plus")) if rule == "PAS-lookahead" else "",
+                        "promotion_enough_candidates": enough_candidates if rule == "PAS-lookahead" else "",
                         "promotion_min_candidates": promotion_min_candidates if rule == "PAS-lookahead" else "",
                         "promotion_candidate_count": len(stage_candidates) if rule == "PAS-lookahead" else "",
                         "carry_forward_mode": args.carry_forward_mode if rule == "PAS-lookahead" else "",

@@ -26,7 +26,7 @@ STAGES=${STAGES:-"0.05,0.10,0.15,0.20,0.25,0.30"}
 STAGE_WINDOW=${STAGE_WINDOW:-"0.015"}
 EPSILON=${EPSILON:-"0.05"}
 MARGIN=${MARGIN:-"0.0"}
-PROMOTION_MODE=${PROMOTION_MODE:-"simple"}
+PROMOTION_MODE=${PROMOTION_MODE:-"official"}
 SAVE_EVERY=${SAVE_EVERY:-"25"}
 GRADUAL_INITIAL_SPARSITY=${GRADUAL_INITIAL_SPARSITY:-"0.05"}
 GRADUAL_PRUNING_END_EPISODE=${GRADUAL_PRUNING_END_EPISODE:-"1000"}
@@ -142,7 +142,14 @@ echo "===== PHASE 3: efficiency summary ====="
   --output-dir "${REPLAY_DIR}" \
   2>&1 | tee "${LOG_DIR}/efficiency.log"
 
+echo "===== PHASE 4: partial/report summary ====="
+"${PYTHON_BIN}" scripts/pas_progressive_partial_report.py \
+  "${REPLAY_DIR}" \
+  --epsilon "${EPSILON}" \
+  2>&1 | tee "${LOG_DIR}/partial_report.log"
+
 echo "===== DONE ====="
 echo "summary=${REPLAY_DIR}/progressive_pas_summary.md"
 echo "efficiency=${REPLAY_DIR}/progressive_pas_efficiency.md"
+echo "partial_report=${REPLAY_DIR}/progressive_pas_partial_report.md"
 cat "${REPLAY_DIR}/progressive_pas_efficiency.md"
