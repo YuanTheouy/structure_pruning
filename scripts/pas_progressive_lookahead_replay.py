@@ -166,9 +166,16 @@ def run_probe_batch(
         print(f"=> reuse {label}: {output_csv}")
         return [row for row in existing if row.get("candidate_id") in candidate_ids]
 
+    missing_candidates = [row for row in candidates if row.get("candidate_id") not in existing_ids]
+    if existing:
+        print(f"=> resume {label}: {len(existing_ids & candidate_ids)}/{len(candidate_ids)} cached, {len(missing_candidates)} missing")
+    if not missing_candidates:
+        return [row for row in existing if row.get("candidate_id") in candidate_ids]
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    input_dir = output_dir / "input_candidates"
-    write_jsonl(input_dir / "candidates.jsonl", candidates)
+    run_label = "shards" if not existing else f"shards_incremental_{int(time.time())}"
+    input_dir = output_dir / "input_candidates" if not existing else output_dir / f"input_candidates_{run_label}"
+    write_jsonl(input_dir / "candidates.jsonl", missing_candidates)
 
     gpu_ids = parse_gpu_ids(args.gpu_ids)
     if not gpu_ids:
@@ -176,7 +183,7 @@ def run_probe_batch(
     procs = []
     shard_csvs = []
     for shard_id, gpu in enumerate(gpu_ids):
-        shard = output_dir / "shards" / f"shard_{shard_id}"
+        shard = output_dir / run_label / f"shard_{shard_id}"
         shard.mkdir(parents=True, exist_ok=True)
         shard_csv = shard / "probe_results.csv"
         shard_csvs.append(shard_csv)
@@ -229,7 +236,13 @@ def run_probe_batch(
     if failed:
         raise RuntimeError(f"At least one probe shard failed for {label}")
 
-    return merge_probe_csvs(shard_csvs, output_csv)
+    new_rows = merge_probe_csvs(shard_csvs, output_csv if not existing else output_dir / f"probe_results_{run_label}.csv")
+    combined_by_id = {row.get("candidate_id"): row for row in existing if row.get("candidate_id")}
+    combined_by_id.update({row.get("candidate_id"): row for row in new_rows if row.get("candidate_id")})
+    combined = [row for row in combined_by_id.values() if row.get("candidate_id") in candidate_ids or row.get("candidate_id") in existing_ids]
+    combined.sort(key=lambda row: (as_int(row.get("shard_id")), row.get("candidate_id", "")))
+    write_csv(output_csv, combined)
+    return [row for row in combined if row.get("candidate_id") in candidate_ids]
 
 
 def append_cache(cache_rows: dict[str, dict], probe_rows: list[dict[str, str]], projection_mode: str, base_sparsity: float, n_samples: int) -> None:
@@ -321,6 +334,10 @@ def parse_args() -> argparse.Namespace:
                         help="Whether lookahead-projected next-stage candidates are added to later stage pools.")
     parser.add_argument("--projection-mode", default="nested_from_base", choices=["nested_from_base", "current"])
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--probe-root-dir", default=None,
+                        help="Optional shared root for stage probe caches across replay settings.")
+    parser.add_argument("--final-probe-root-dir", default=None,
+                        help="Optional shared root for final 30/40 probe caches across replay settings.")
     parser.add_argument("--gpu-ids", default="0")
     parser.add_argument("--n-samples", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=50)
@@ -405,7 +422,8 @@ def main() -> int:
             stage_candidates.sort(key=lambda row: (as_float(row.get("endpoint_logppl")), as_int(row.get("step")), row.get("candidate_id", "")))
             top_candidates = stage_candidates[: args.top_k]
             label = f"prefix{prefix}_stage{safe_float_label(stage)}_to_{safe_float_label(next_stage)}"
-            probe_dir = out_dir / "probes" / label
+            probe_root = Path(args.probe_root_dir) if args.probe_root_dir else out_dir / "probes"
+            probe_dir = probe_root / label
             stage_rows = run_probe_batch(
                 args=args,
                 label=label,
@@ -491,7 +509,7 @@ def main() -> int:
                 center=args.target_sparsity,
                 delta=args.heldout_sparsity - args.target_sparsity,
                 base_sparsity=stage,
-                output_dir=out_dir / "final_probes" / final_label,
+                output_dir=(Path(args.final_probe_root_dir) if args.final_probe_root_dir else out_dir / "final_probes") / final_label,
             )
             append_cache(cache_rows, final_rows, args.projection_mode, stage, args.n_samples)
             final_by_id = probe_by_id(final_rows)

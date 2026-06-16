@@ -43,9 +43,13 @@ run_replay() {
   local eps_label="${epsilon/./p}"
   local margin_label="${margin/./p}"
   local replay_dir="${OUT_ROOT}/topk${top_k}_eps${eps_label}_margin${margin_label}"
+  local shared_probe_root="${OUT_ROOT}/topk${top_k}_eps0p05_margin0p00/probes"
+  local shared_final_probe_root="${OUT_ROOT}/topk${top_k}_eps0p05_margin0p00/final_probes"
   mkdir -p "${replay_dir}"
 
   echo "===== replay top_k=${top_k} epsilon=${epsilon} margin=${margin} ====="
+  echo "shared_probe_root=${shared_probe_root}"
+  echo "shared_final_probe_root=${shared_final_probe_root}"
   "${PYTHON_BIN}" scripts/pas_progressive_lookahead_replay.py \
     --model "${MODEL}" \
     --model-name "${MODEL_NAME}" \
@@ -69,6 +73,8 @@ run_replay() {
     --batch-size "${BATCH_SIZE}" \
     --seed "${SEED}" \
     --output-dir "${replay_dir}" \
+    --probe-root-dir "${shared_probe_root}" \
+    --final-probe-root-dir "${shared_final_probe_root}" \
     2>&1 | tee "${LOG_DIR}/replay_topk${top_k}_eps${eps_label}_margin${margin_label}.log"
 
   "${PYTHON_BIN}" scripts/pas_progressive_efficiency_table.py \
