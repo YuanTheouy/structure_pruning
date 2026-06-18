@@ -158,6 +158,17 @@ def run_probe_batch(
     base_sparsity: float,
     output_dir: Path,
 ) -> list[dict[str, str]]:
+    def print_log_tail(log_path: Path, max_lines: int = 80) -> None:
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            print(f"--- unable to read failed probe log {log_path}: {exc}", file=sys.stderr)
+            return
+        print(f"--- tail -n {max_lines} {log_path}", file=sys.stderr)
+        for line in lines[-max_lines:]:
+            print(line, file=sys.stderr)
+        print(f"--- end tail {log_path}", file=sys.stderr)
+
     output_csv = output_dir / "probe_results.csv"
     existing = read_csv(output_csv)
     existing_ids = {row.get("candidate_id") for row in existing}
@@ -233,6 +244,7 @@ def run_probe_batch(
         if rc != 0:
             failed = True
             print(f"FAILED probe shard log={log_path}", file=sys.stderr)
+            print_log_tail(log_path)
     if failed:
         raise RuntimeError(f"At least one probe shard failed for {label}")
 
