@@ -30,9 +30,21 @@ OUT_ROOT=${OUT_ROOT_OVERRIDE:-"/workspace/ckpts/pas_progressive_lookahead/${MODE
 LOG_DIR=${LOG_DIR_OVERRIDE:-"${OUT_ROOT}/logs"}
 mkdir -p "${OUT_ROOT}" "${LOG_DIR}"
 
+unset HF_DATASETS_OFFLINE
+export HF_HOME="${HF_HOME:-/workspace/datasets/.cache/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/workspace/datasets/.cache/huggingface/datasets}"
+export WIKITEXT2_PATH="${WIKITEXT2_PATH:-/workspace/datasets/wikitext/wikitext-2-raw-v1}"
+export WIKITEXT2_CONFIG="${WIKITEXT2_CONFIG:-wikitext-2-raw-v1}"
+
 if [[ ! -s "${CANDIDATE_DIR}/all_candidates.jsonl" && ! -s "${CANDIDATE_DIR}/candidates.jsonl" ]]; then
   echo "Missing candidate pool under ${CANDIDATE_DIR}" >&2
   echo "Set CANDIDATE_DIR_OVERRIDE to the existing seed9025 candidate directory." >&2
+  exit 2
+fi
+
+if [[ ! -f "${WIKITEXT2_PATH}/dataset_dict.json" && ! -f "${WIKITEXT2_PATH}/state.json" ]]; then
+  echo "Missing WikiText-2 dataset under ${WIKITEXT2_PATH}" >&2
+  echo "Run scripts/download_p0_resources.py --skip_model before launching ablation." >&2
   exit 2
 fi
 
