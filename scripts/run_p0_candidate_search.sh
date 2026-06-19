@@ -31,6 +31,16 @@ DATASET_INITIAL_RATIO=${DATASET_INITIAL_RATIO:-"0.05"}
 DATASET_FINAL_RATIO=${DATASET_FINAL_RATIO:-"${DATASET_INITIAL_RATIO}"}
 DATASET_GROWTH_START_EPISODE=${DATASET_GROWTH_START_EPISODE:-"0"}
 DATASET_GROWTH_END_EPISODE=${DATASET_GROWTH_END_EPISODE:-"${TRAIN_EPISODES}"}
+AGENT_PATH=${AGENT_PATH:-""}
+RESUME_FROM_CHECKPOINT=${RESUME_FROM_CHECKPOINT:-""}
+ACTION_WALL_MODE=${ACTION_WALL_MODE:-"exact_projector"}
+EVAL_PPL_BATCH_SIZE=${EVAL_PPL_BATCH_SIZE:-"1"}
+EVAL_PPL_DATA_PARALLEL=${EVAL_PPL_DATA_PARALLEL:-"false"}
+USE_GUMBEL_SOFTMAX=${USE_GUMBEL_SOFTMAX:-"false"}
+NUM_ACTION_BINS=${NUM_ACTION_BINS:-"4"}
+GUMBEL_TAU_INITIAL=${GUMBEL_TAU_INITIAL:-"2.0"}
+GUMBEL_TAU_FINAL=${GUMBEL_TAU_FINAL:-"0.2"}
+GUMBEL_ANNEAL_EPISODES=${GUMBEL_ANNEAL_EPISODES:-"500"}
 
 RUN_ROOT=${RUN_ROOT:-"${CKPT_ROOT}/${MODEL_NAME}/sparsity_${TARGET_SPARSITY}/${RUN_ID}"}
 CANDIDATE_DIR=${CANDIDATE_DIR:-"${RUN_ROOT}/candidates"}
@@ -79,6 +89,29 @@ else
   )
 fi
 
+EXTRA_FLAGS=(
+  --action_wall_mode="${ACTION_WALL_MODE}"
+  --eval_ppl_batch_size="${EVAL_PPL_BATCH_SIZE}"
+)
+if [[ -n "${AGENT_PATH}" ]]; then
+  EXTRA_FLAGS+=(--agent_path="${AGENT_PATH}")
+fi
+if [[ -n "${RESUME_FROM_CHECKPOINT}" ]]; then
+  EXTRA_FLAGS+=(--resume_from_checkpoint="${RESUME_FROM_CHECKPOINT}")
+fi
+if [[ "${EVAL_PPL_DATA_PARALLEL}" == "true" ]]; then
+  EXTRA_FLAGS+=(--eval_ppl_data_parallel)
+fi
+if [[ "${USE_GUMBEL_SOFTMAX}" == "true" ]]; then
+  EXTRA_FLAGS+=(
+    --use_gumbel_softmax
+    --num_action_bins="${NUM_ACTION_BINS}"
+    --gumbel_tau_initial="${GUMBEL_TAU_INITIAL}"
+    --gumbel_tau_final="${GUMBEL_TAU_FINAL}"
+    --gumbel_anneal_episodes="${GUMBEL_ANNEAL_EPISODES}"
+  )
+fi
+
 "${PYTHON_BIN}" -u amc_searchPPO.py \
   --job=train \
   --model="${MODEL}" \
@@ -106,6 +139,7 @@ fi
   --candidate_top_k="${TOP_K}" \
   --candidate_dir="${CANDIDATE_DIR}" \
   --run_id="${RUN_ID}" \
+  "${EXTRA_FLAGS[@]}" \
   "${DATASET_FLAGS[@]}" \
   "${GRADUAL_FLAGS[@]}"
 

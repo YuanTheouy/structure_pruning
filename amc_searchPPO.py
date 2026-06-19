@@ -277,6 +277,9 @@ def parse_args():
                         help='Batch size used inside PPL validation.')
     parser.add_argument('--eval_ppl_data_parallel', action='store_true',
                         help='Keep one PPO search, load the model on cuda:0, and use torch.nn.DataParallel to split PPL validation batches across visible GPUs.')
+    parser.add_argument('--action_wall_mode', default='exact_projector',
+                        choices=['exact_projector', 'legacy_soft'],
+                        help='Map actor scores to per-module retention ratios. exact_projector is the FastForward budget projector; legacy_soft is the old clipped sequential wall for ablation only.')
     parser.add_argument('--run_id', default=None, type=str,
                         help='Run id used under results/{model}/{sparsity}/{run_id}/.')
     parser.add_argument('--candidates_path', default=None, type=str,
@@ -1224,7 +1227,34 @@ def export_model(env, args):
 
     print('=> Pruning with ratios: {}'.format(ratios))
 
-    env.step(ratios)
+    _, reward, _, info = env.step(ratios)
+    if args.export_path:
+        metadata_path = os.path.splitext(args.export_path)[0] + ".json"
+        target_sparsity = 1.0 - float(args.preserve_ratio)
+        budget = compute_policy_budget(
+            info.get("strategy", ratios),
+            target_sparsity,
+            build_env_module_costs(env),
+        )
+        dump_json(metadata_path, {
+            "checkpoint_path": args.export_path,
+            "model": args.model,
+            "model_name": args.model_name,
+            "dataset_name": args.dataset_name,
+            "preserve_ratio": args.preserve_ratio,
+            "target_sparsity": target_sparsity,
+            "ppl": info.get("ppl"),
+            "reward": reward,
+            "compress_ratio": info.get("compress_ratio"),
+            "para_ratio": info.get("para_ratio"),
+            "actual_sparsity": budget["actual_sparsity"],
+            "budget_error": budget["budget_error"],
+            "relative_budget_error": budget["relative_budget_error"],
+            "recon": bool(args.recon),
+            "recon_sample": args.recon_sample,
+            "ratios": ratios,
+        })
+        print(f"=> Export metadata saved to {metadata_path}")
     
     # 如果启用了延迟下游任务评估，在剪枝+重构完成后进行评估
     if getattr(args, 'delayed_downstream_eval', False) and getattr(args, 'enable_downstream', 'false').lower() == 'true':

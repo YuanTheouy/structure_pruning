@@ -1343,11 +1343,52 @@ class ChannelPruningEnv:
 
     #     return list(actions)
 
-# channel_pruning_env_llm_global.py
+    def _legacy_soft_action_wall(self, action):
+        actions = np.abs(action)
+        actions = np.clip(actions, 0, 1)
+
+        def format_rank(x):
+            rank = int(np.around(x))
+            return max(rank, 1)
+
+        for i in range(len(self.dim_list)):
+            d_prime = format_rank(actions[i] * self.dim_list[i])
+            d_prime = int(np.ceil(d_prime * 1. / self.channel_round) * self.channel_round)
+            actions[i] = d_prime / self.dim_list[i]
+
+        actions = actions.clip(self.lbound, self.rbound)
+
+        for idx in range(len(actions)):
+            other_comp = 0
+            this_comp = 0
+            for i in range(self.num_hidden_layers * 2):
+                if self.args.prune == 'flops':
+                    if i == idx:
+                        this_comp += self.flops_list[i]
+                    elif i < idx:
+                        other_comp += actions[i] * self.flops_list[i]
+                    else:
+                        other_comp += self.lbound * self.flops_list[i]
+                elif self.args.prune == 'para':
+                    if i == idx:
+                        this_comp += self.param_list[i]
+                    elif i < idx:
+                        other_comp += actions[i] * (self.param_list[i] - self.norm_para[i]) + self.norm_para[i]
+                    else:
+                        other_comp += self.lbound * (self.param_list[i] - self.norm_para[i]) + self.norm_para[i]
+
+            max_preserve_ratio = (self.expected_preserve_computation - other_comp) * 1. / this_comp
+            actions[idx] = np.minimum(actions[idx], max_preserve_ratio)
+            actions[idx] = np.maximum(actions[idx], self.lbound)
+
+        return list(actions)
 
     def _action_wall(self, action):
         if self.export_model:
             return action
+
+        if getattr(self.args, "action_wall_mode", "exact_projector") == "legacy_soft":
+            return self._legacy_soft_action_wall(action)
 
         if self.args.prune == 'para':
             module_costs = make_module_costs(
